@@ -1,0 +1,167 @@
+# ============================================================
+# IM Service Nginx 配置文件示例
+# ============================================================
+# 使用方式：
+#   1. 复制此文件到 /etc/nginx/sites-available/im-service
+#   2. 修改端口号（如需要）
+#   3. 创建软链接： sudo ln -s /etc/nginx/sites-available/im-service /etc/nginx/sites-enabled/
+#   4. 测试配置： sudo nginx -t
+#   5. 重启 Nginx： sudo systemctl reload nginx
+# ============================================================
+
+# 定义后端服务
+upstream im_backend {
+    server 127.0.0.1:3001;  # Node.js 服务地址
+    keepalive 64;           # 连接池大小
+}
+
+# 主服务配置
+server {
+    # 监听端口（可修改为其他端口，如 8000、8888、9000）
+    listen 8080;
+
+    # 使用 IP 访问，不需要域名
+    server_name _;
+
+    # 日志文件
+    access_log /var/log/nginx/im-service-access.log;
+    error_log /var/log/nginx/im-service-error.log;
+
+    # ========================================
+    # 静态文件 - 管理后台（需要认证）
+    # ========================================
+
+    # 管理后台页面
+    location /admin.html {
+        # HTTP 基本认证
+        auth_basic "IM Service Admin Panel";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+
+        # 可选：IP 白名单（如果需要额外保护）
+        # allow 123.45.67.89;    # 您的办公室 IP
+        # allow 192.168.1.0/24;  # 内网 IP 段
+        # deny all;
+
+        # 静态文件路径
+        root /opt/im-service;
+        try_files $uri $uri/ =404;
+    }
+
+    # 测试页面（可选，生产环境建议删除或保护）
+    location ~* ^/(test\.html|ws-client-test\.html)$ {
+        auth_basic "IM Service Test Pages";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+
+        root /opt/im-service;
+        try_files $uri $uri/ =404;
+    }
+
+    # ========================================
+    # API 接口代理
+    # ========================================
+
+    location /api/ {
+        # 代理到后端服务
+        proxy_pass http://im_backend;
+        proxy_http_version 1.1;
+
+        # 请求头设置
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 缓存设置
+        proxy_cache_bypass $http_upgrade;
+
+        # 超时设置
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+
+        # 可选：限流保护
+        # limit_req zone=api_limit burst=200 nodelay;
+    }
+
+    # ========================================
+    # WebSocket 代理
+    # ========================================
+
+    location / {
+        # 代理到后端服务
+        proxy_pass http://im_backend;
+        proxy_http_version 1.1;
+
+        # WebSocket 升级
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # WebSocket 长连接超时（7天）
+        proxy_connect_timeout 7d;
+        proxy_send_timeout 7d;
+        proxy_read_timeout 7d;
+    }
+
+    # ========================================
+    # 健康检查端点
+    # ========================================
+
+    location /health {
+        proxy_pass http://im_backend/health;
+
+        # 不记录健康检查日志
+        access_log off;
+    }
+}
+
+# ============================================================
+# 可选：限流配置
+# ============================================================
+# 在 http 块中添加以下配置（/etc/nginx/nginx.conf）
+#
+# http {
+#     # 管理后台限流（每分钟 5 次）
+#     limit_req_zone $binary_remote_addr zone=admin_limit:10m rate=5r/m;
+#
+#     # API 限流（每秒 100 次）
+#     limit_req_zone $binary_remote_addr zone=api_limit:10m rate=100r/s;
+#
+#     # 隐藏 Nginx 版本号
+#     server_tokens off;
+# }
+
+# ============================================================
+# 使用说明
+# ============================================================
+#
+# 1. 访问地址：
+#    - 管理后台：http://your-server-ip:8080/admin.html
+#    - API 接口：http://your-server-ip:8080/api/
+#    - 健康检查：http://your-server-ip:8080/health
+#    - WebSocket：ws://your-server-ip:8080/
+#
+# 2. 创建认证密码：
+#    sudo apt install -y apache2-utils
+#    sudo htpasswd -c /etc/nginx/.htpasswd admin
+#
+# 3. 防火墙配置：
+#    sudo ufw allow 8080/tcp
+#    sudo ufw status
+#
+# 4. 检查后端服务：
+#    sudo netstat -tulpn | grep 3001
+#    curl http://localhost:3001/health
+#
+# 5. 常用命令：
+#    sudo nginx -t                    # 测试配置
+#    sudo systemctl reload nginx      # 重启 Nginx
+#    sudo systemctl status nginx      # 查看状态
+#    sudo tail -f /var/log/nginx/im-service-access.log  # 查看日志
+#
+# ============================================================

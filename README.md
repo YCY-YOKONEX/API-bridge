@@ -1,24 +1,33 @@
-# IM Service
+# IM Service - 并发安全多用户版本
 
 Node.js IM 服务，负责连接腾讯云 IM 并发送游戏指令。
 
-## 功能
+> **🎉 v2.0 重大更新**: 现已支持多用户并发访问，可安全部署到公网！
 
-- 自动连接腾讯云 IM
-- 提供 HTTP API 接口供 Python 后端调用
-- 提供 WebSocket 实时通信接口
-- 实时推送 IM 消息和状态变化
-- 自动重连机制
-- 健康检查端点
+## 主要特性
 
-## 安装
+- ✅ **并发安全**: 支持多用户同时使用，互不干扰
+- ✅ **会话管理**: 每个用户独立的 IM 会话实例
+- ✅ **资源限制**: 可配置的连接数和会话超时限制
+- ✅ **自动清理**: 过期会话自动回收，防止内存泄漏
+- ✅ **向后兼容**: 保留旧版 API 支持
+- 🔒 提供 HTTP API 接口供 Python 后端调用
+- 🔌 提供 WebSocket 实时通信接口
+- 📡 实时推送 IM 消息和状态变化
+- 🔄 自动重连机制
+- 💚 健康检查端点
+
+---
+
+## 快速开始
+
+### 1. 安装依赖
 
 ```bash
-cd im-service
 npm install
 ```
 
-## 启动
+### 2. 启动服务
 
 ```bash
 npm start
@@ -29,198 +38,414 @@ npm start
 npm run dev
 ```
 
-## 服务地址
+服务将在 `http://localhost:3001` 启动。
 
-启动后服务将在以下地址可用：
+### 3. 基本使用
 
-- **HTTP API**: `http://localhost:3001`
-- **WebSocket**: `ws://localhost:3001`
+```bash
+# 步骤 1: 登录（创建会话）
+curl -X POST http://your-server-ip:8080/api/login \
+  -H "Content-Type: application/json" \
+  -d '{"uid": "your_user_id", "token": "your_token"}'
 
-## API 文档
+# 步骤 2: 发送指令
+curl -X POST http://your-server-ip:8080/api/send-command \
+  -H "Content-Type: application/json" \
+  -d '{"userId": "your_user_id", "commandId": "cmd_001"}'
 
-### HTTP API
+# 步骤 3: 查看状态
+curl http://your-server-ip:8080/health
+```
 
-提供 RESTful 接口，支持以下功能：
-- 健康检查 (`GET /health`)
-- 获取状态 (`GET /api/status`)
-- 发送指令 (`POST /api/send-command`)
-- 重新初始化 (`POST /api/reinit`)
-- 使用凭证登录 (`POST /api/login`)
+**注意**:
+- 默认使用 8080 端口（Nginx 反向代理）
+- `your-server-ip` 替换为实际服务器 IP 地址
+- 本地开发可以直接访问 `http://localhost:3001`
 
-**详细文档**: [HTTP_API.md](docs/HTTP_API.md)
+---
 
-### WebSocket API
+## 配置说明
 
-提供实时双向通信，支持所有 HTTP API 功能，并额外提供实时消息推送。
+### 资源限制
 
-主要功能：
-- 实时状态推送
-- IM 消息接收
-- 网络状态监控
-- 心跳机制
+编辑 `server.js` 中的配置（第 23-26 行）：
 
-**详细文档**: [WEBSOCKET_API.md](docs/WEBSOCKET_API.md)
+```javascript
+const MAX_SESSIONS = 10;                    // 最大会话数
+const MAX_WS_CONNECTIONS = 200;             // 最大 WebSocket 连接数
+const SESSION_TIMEOUT = 240 * 60 * 1000;    // 会话超时 (240分钟)
+const SESSION_CLEANUP_INTERVAL = 5 * 60 * 1000; // 清理间隔 (5分钟)
+```
 
-## 日志
+---
 
-服务会输出详细的日志信息：
+## HTTP API
+
+**访问方式说明：**
+- **本地开发**: `http://localhost:3001`
+- **生产环境**: `http://your-server-ip:8080`（通过 Nginx）
+
+
+### 服务器广播事件
+
+服务器会自动向所有连接的 WebSocket 客户端广播以下事件：
+
+#### 连接成功
+```json
+{
+  "type": "connected",
+  "message": "WebSocket 连接成功",
+  "data": { "totalSessions": 3 }
+}
+```
+
+#### 心跳（每 30 秒）
+```json
+{
+  "type": "heartbeat",
+  "data": {
+    "timestamp": 1702741234567,
+    "stats": { "totalSessions": 3 }
+  }
+}
+```
+
+#### 状态变化
+```json
+{
+  "type": "status",
+  "userId": "12345",
+  "data": {
+    "isReady": true,
+    "event": "SDK_READY"
+  }
+}
+```
+
+#### 收到消息
+```json
+{
+  "type": "message",
+  "userId": "12345",
+  "data": {
+    "count": 1,
+    "messages": [...]
+  }
+}
+```
+
+---
+
+## v2.0 版本说明
+
+### 新特性
+
+1. **多用户支持**: 从单用户升级到支持多个并发用户（默认 10 个）
+2. **并发安全**: 使用 AsyncLock 保护关键操作，防止竞态条件
+3. **会话隔离**: 每个用户独立的 IM 实例和状态
+4. **资源管理**: 最大会话数、WebSocket 连接数限制
+5. **自动清理**: 超时未活动的会话自动销毁
+
+### API 变更
+
+**重要:** 所有操作现在需要 `userId` 参数来标识用户。
+
+
+## 部署建议
+
+### ⚠️ 安全警告
+
+**部署到公网前必读！**
+
+管理后台 `admin.html` 包含敏感操作（登录、发送指令、登出会话），**直接暴露到公网存在严重安全风险**。
+
+**必须配置访问保护：**
+
+- 🔒 **HTTP 基本认证**（推荐）- 用户名密码保护
+- 🔐 **HTTPS 加密** - SSL/TLS 证书
+- 🚪 **SSH 隧道访问** - 不暴露在公网
+- 🌍 **IP 白名单**（可选）- 限制特定 IP 访问
+
+**完整安全配置方案请查看：[SECURITY.md](docs/SECURITY.md)** ⭐
+
+---
+
+### 生产环境部署
+
+详细的 Ubuntu 服务器部署指南请查看：**[DEPLOY.md](docs/DEPLOY.md)**
+
+#### 快速部署（一键脚本）
+
+```bash
+# 1. 上传部署脚本到服务器
+scp deploy.sh user@your-server:/tmp/
+
+# 2. 在服务器上执行
+ssh user@your-server
+sudo bash /tmp/deploy.sh
+```
+
+#### 手动部署步骤
+
+1. **安装 Node.js 18+**
+   ```bash
+   curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+   sudo apt install -y nodejs
+   ```
+
+2. **安装 PM2**
+   ```bash
+   sudo npm install -g pm2
+   ```
+
+3. **上传代码**
+   ```bash
+   # 使用 SCP
+   scp -r /path/to/API-bridge user@server:/opt/im-service
+
+   # 或使用 Git
+   git clone https://github.com/your-repo.git /opt/im-service
+   ```
+
+4. **安装依赖并启动**
+   ```bash
+   cd /opt/im-service
+   npm install --production
+   pm2 start server.js --name im-service
+   pm2 save
+   pm2 startup
+   ```
+
+5. **配置 Nginx 反向代理**
+   ```bash
+   sudo apt install -y nginx
+   # 参考 DEPLOY.md 中的 Nginx 配置
+   ```
+
+6. **配置 HTTPS（可选）**
+   ```bash
+   sudo apt install -y certbot python3-certbot-nginx
+   sudo certbot --nginx -d your-domain.com
+   ```
+
+### 常用管理命令
+
+```bash
+# 查看服务状态
+pm2 status
+
+# 查看日志
+pm2 logs im-service
+
+# 重启服务
+pm2 restart im-service
+
+# 查看资源使用
+pm2 monit
+```
+
+详细说明请参考 [DEPLOY.md](docs/DEPLOY.md)
+
+---
+
+## 日志说明
+
+日志格式: `[时间戳] [级别] [用户ID] 消息`
 
 ```
-[2024-12-15T10:30:00.000Z] [INFO] 正在初始化 IM 客户端...
-[2024-12-15T10:30:01.000Z] [INFO] 已加载配置: UID=game_5, UserID=5
-[2024-12-15T10:30:02.000Z] [INFO] ✓ 获取 IM 签名成功
-[2024-12-15T10:30:03.000Z] [INFO] 正在登录 IM...
-[2024-12-15T10:30:04.000Z] [INFO] ✓ IM SDK 就绪
-[2024-12-15T10:30:04.000Z] [INFO] ✓ IM 客户端初始化成功
-[2024-12-15T10:30:04.000Z] [INFO] ============================================================
-[2024-12-15T10:30:04.000Z] [INFO] CS2 IM 服务已启动
-[2024-12-15T10:30:04.000Z] [INFO] HTTP 服务: http://localhost:3001
-[2024-12-15T10:30:04.000Z] [INFO] WebSocket 服务: ws://localhost:3001
-[2024-12-15T10:30:04.000Z] [INFO] ============================================================
+[2025-12-16T13:39:24.766Z] [INFO] CS2 IM 多用户并发安全服务已启动
+[2025-12-16T13:39:24.766Z] [INFO] HTTP 服务: http://localhost:3001
+[2025-12-16T13:39:24.766Z] [INFO] 最大会话数: 10
+[2025-12-16T13:39:24.766Z] [INFO] 会话超时: 240 分钟
+[2025-12-16T13:40:00.123Z] [INFO] [12345] 正在初始化 IM 会话...
+[2025-12-16T13:40:01.456Z] [INFO] [12345] ✓ IM 会话初始化成功
+[2025-12-16T13:40:05.789Z] [INFO] [12345] ✓ 指令发送成功: cmd_001
 ```
+
+**级别说明:**
+- `INFO` - 正常操作
+- `WARN` - 警告信息
+- `ERROR` - 错误信息
+- `DEBUG` - 调试信息（心跳、清理等）
+
+---
 
 ## 错误处理
 
-- **IM 未就绪**: 返回 503 状态码
-- **缺少参数**: 返回 400 状态码
-- **发送失败**: 返回 500 状态码，包含错误信息
+### 常见错误
 
-## 自动重连
+#### 1. 会话不存在
+```json
+{
+  "success": false,
+  "message": "会话不存在，请先登录"
+}
+```
+**解决:** 调用 `/api/login` 创建会话
 
-当 IM 连接断开时，服务会自动尝试重连：
+#### 2. 会话数已达上限
+```json
+{
+  "success": false,
+  "message": "会话数已达上限 (10)，请稍后再试"
+}
+```
+**解决:** 等待过期会话自动清理，或手动调用 `/api/logout` 清理不需要的会话
 
-- 被踢下线：5秒后自动重连
-- 网络异常：自动检测并重连
+#### 3. WebSocket 连接数已达上限
+```json
+{
+  "type": "error",
+  "message": "WebSocket 连接数已达上限 (200)"
+}
+```
+**解决:** 关闭一些不使用的连接
 
-## 心跳机制
+#### 4. IM 会话未就绪
+```json
+{
+  "success": false,
+  "message": "IM 会话未就绪"
+}
+```
+**解决:** 等待会话初始化完成（通常需要几秒钟）
 
-服务每 30 秒输出一次心跳日志，确认 IM 连接状态。
-
-## 优雅退出
-
-按 `Ctrl+C` 退出时，服务会：
-1. 登出 IM
-2. 销毁 IM 实例
-3. 关闭 HTTP 服务器
+---
 
 ## 故障排查
 
-### IM 初始化失败
+### 服务无法启动
+- 检查端口 3001 是否被占用
+- 检查 Node.js 版本 (需要 >= 18)
+- 查看启动日志
 
-1. 检查 `state.json` 文件是否存在
-2. 确认 UID 和 Token 是否正确
-3. 检查网络连接
+### 登录失败
+- 检查 uid 和 token 是否正确
+- 检查网络连接
+- 查看服务器日志中的错误信息
 
 ### 指令发送失败
+- 确认会话已创建（调用过 `/api/login`）
+- 检查 userId 是否正确
+- 确认会话状态为 ready（通过 `/api/session/:userId` 查看）
 
-1. 确认 IM 状态为 `isReady: true`
-2. 检查目标用户 ID 是否正确
-3. 查看服务日志获取详细错误信息
+### 内存持续增长
+- 检查是否有会话泄漏
+- 确认会话超时清理是否正常工作
+- 监控 `/health` 端点的会话数
 
-### 端口冲突
+---
 
-如果 3001 端口被占用，修改 `server.js` 中的 `PORT` 常量。
+## 管理后台
 
-## 技术栈
+### ⚠️ 安全警告
 
-- Node.js 18+
-- Express.js
-- @tencentcloud/chat
-- WebSocket (ws)
+**管理后台包含敏感操作，生产环境必须配置访问保护！**
 
-## 项目文件
-
-### 核心文件
-- `server.js` - 主服务器文件（HTTP + WebSocket）
-- `package.json` - 项目配置和依赖
-
-### 文档
-- `README.md` - 项目说明文档（本文件）
-- `HTTP_API.md` - HTTP API 完整文档
-- `WEBSOCKET_API.md` - WebSocket API 完整文档
-- `PROJECT_STRUCTURE.md` - 项目结构和开发指南
-
-### 测试工具
-- `test.html` - 统一测试页面（HTTP + WebSocket）
-- `ws-client-test.html` - WebSocket 专用测试客户端
-
-## 使用场景
-
-### HTTP API
-适用于简单的请求-响应场景：
-- 发送单个指令
-- 查询当前状态
-- 触发重新初始化
-
-### WebSocket
-适用于需要实时通信的场景：
-- 实时监控 IM 状态变化
-- 接收 IM 消息推送
-- 持续的双向通信
-- 减少轮询开销
-
-## 快速开始
-
-### 1. 启动服务
-
+快速配置安全保护（推荐）：
 ```bash
-npm start
+# 上传安全配置脚本到服务器
+scp secure-admin.sh user@your-server:/tmp/
+
+# 在服务器上执行（会自动配置 HTTP 基本认证）
+ssh user@your-server
+sudo bash /tmp/secure-admin.sh
 ```
 
-### 2. 使用测试工具
+完整安全方案请查看：**[SECURITY.md](docs/SECURITY.md)**
 
-在浏览器中打开 `test.html`，可以：
+---
+
+### Web 管理界面
+
+打开 `admin.html` 在浏览器中使用可视化管理界面：
+
+```bash
+# 在浏览器中打开
+file:///D:/JavaProject/API-bridge/admin.html
+# 或直接双击文件打开
+```
+
+**功能特性：**
+- 📊 实时统计信息展示
+- 🔐 用户登录管理
+- 👥 活跃会话列表
+- 📤 发送指令
+- 🔌 WebSocket 实时连接
+- 📋 活动日志记录
+- 🎨 美观的现代化界面
+
+### 浏览器测试工具
+
+打开 `test.html` 或 `ws-client-test.html` 进行功能测试：
 - 测试所有 HTTP API 接口
 - 测试 WebSocket 连接和消息
 - 使用自定义凭证登录 IM
 - 查看实时日志和状态
 
-### 3. 使用 HTTP API
+---
 
-```bash
-# 健康检查
-curl http://localhost:3001/health
+## 技术栈
 
-# 使用凭证登录
-curl -X POST http://localhost:3001/api/login \
-  -H "Content-Type: application/json" \
-  -d '{"uid": "5", "token": "your_token"}'
+- **Node.js 18+** - 运行时环境
+- **Express.js** - HTTP 服务器
+- **ws** - WebSocket 服务器
+- **async-lock** - 并发控制
+- **@tencentcloud/chat** - 腾讯云 IM SDK
+- **cors** - 跨域支持
 
-# 发送指令
-curl -X POST http://localhost:3001/api/send-command \
-  -H "Content-Type: application/json" \
-  -d '{"commandId": "player_hurt"}'
-```
+---
 
-更多示例请查看 [HTTP_API.md](docs/HTTP_API.md)
+## 常见问题
 
-### 4. 使用 WebSocket
+### Q: 旧客户端需要修改代码吗？
+A: 需要。所有 API 调用现在需要提供 `userId` 参数。
 
-```javascript
-const ws = new WebSocket('ws://localhost:3001');
+### Q: 可以同时支持多少用户？
+A: 默认 10 个并发会话。可通过修改 `server.js` 中的 `MAX_SESSIONS` 配置调整。
 
-ws.onopen = () => {
-  // 使用凭证登录
-  ws.send(JSON.stringify({
-    type: 'login',
-    uid: '5',
-    token: 'your_token'
-  }));
-};
+### Q: 会话会自动清理吗？
+A: 是的。240 分钟（4 小时）未活动的会话会自动销毁，释放资源。
 
-ws.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  console.log('收到消息:', data);
-};
-```
+### Q: 如何监控系统状态？
+A: 访问 `/health` 端点查看所有活跃会话和资源使用情况。
 
-更多示例请查看 [WEBSOCKET_API.md](docs/WEBSOCKET_API.md)
+### Q: 支持负载均衡吗？
+A: 需要使用 session sticky（根据 userId 路由到同一实例）或 Redis 共享会话状态。
 
 ---
 
 ## 文档导航
 
-- **[README.md](README.md)** - 项目概述和快速开始（当前文档）
-- **[HTTP_API.md](docs/HTTP_API.md)** - HTTP API 完整文档
-- **[WEBSOCKET_API.md](docs/WEBSOCKET_API.md)** - WebSocket API 完整文档
-- **[PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)** - 项目结构和开发指南
+### 核心文档
+- **[README.md](README.md)** - 项目说明（当前文档）
+- **[SECURITY.md](docs/SECURITY.md)** - 安全配置指南 🔒 **必读**
+- **[DEPLOY.md](docs/DEPLOY.md)** - Ubuntu 服务器部署指南 🚀
+- **[server.js](server.js)** - 服务器源代码
+- **[admin.html](admin.html)** - Web 管理后台
+- **[deploy.sh](deploy.sh)** - 一键部署脚本
+- **[secure-admin.sh](secure-admin.sh)** - 管理后台安全配置脚本
+
+### 配置示例
+- **[nginx.conf.example](nginx.conf.example)** - Nginx 完整配置示例
+- **[nginx-examples.md](nginx-examples.md)** - 多种场景的配置示例集合
+
+### 参考文档
+- **[HTTP_API.md](docs/HTTP_API.md)** - 旧版 HTTP API 文档
+- **[WEBSOCKET_API.md](docs/WEBSOCKET_API.md)** - 旧版 WebSocket API 文档
+- **[PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)** - 项目结构说明
+
+---
+
+## 优雅退出
+
+按 `Ctrl+C` 退出时，服务会：
+1. 登出所有 IM 会话
+2. 销毁所有 IM 实例
+3. 关闭 HTTP 和 WebSocket 服务器
+
+---
+
+## 许可证
+
+MIT

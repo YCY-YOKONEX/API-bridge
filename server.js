@@ -1,14 +1,19 @@
 import TencentCloudChat from '@tencentcloud/chat';
 import express from 'express';
 import cors from 'cors';
-import { promises as fs } from 'fs';
-import path from 'path';
 import { fileURLToPath } from 'url';
-import { WebSocketServer } from 'ws';
+import { dirname } from 'path';
+import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
+import AsyncLock from 'async-lock';
+
+// 为腾讯云 SDK 提供 WebSocket polyfill (Node.js 环境需要)
+if (typeof global.WebSocket === 'undefined') {
+  global.WebSocket = WebSocket;
+}
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname = dirname(__filename);
 
 const app = express();
 const PORT = 3001;
@@ -17,22 +22,17 @@ const PORT = 3001;
 app.use(cors());
 app.use(express.json());
 
-// IM 客户端状态
-let chat = null;
-let isReady = false;
-let config = {
-  uid: null,
-  userId: null,
-  token: null,
-  appId: null,
-  sign: null
-};
-
-// WebSocket 客户端管理
-const wsClients = new Set();
-
+// 常量配置
 const API_BASE = 'https://suo.jiushu1234.com/api.php';
-const STATE_FILE = path.resolve(__dirname, '..', 'state.json');
+
+// 资源限制配置
+const MAX_SESSIONS = 100;              // 最大会话数
+const MAX_WS_CONNECTIONS = 200;       // 最大 WebSocket 连接数
+const SESSION_TIMEOUT = 240 * 60 * 1000; // 会话超时时间
+const SESSION_CLEANUP_INTERVAL = 5 * 60 * 1000; // 清理检查间隔 (5分钟)
+
+// 全局锁管理器
+const lock = new AsyncLock({ timeout: 10000 });
 
 // 日志函数
 function log(level, ...args) {
@@ -40,327 +40,561 @@ function log(level, ...args) {
   console.log(`[${timestamp}] [${level}]`, ...args);
 }
 
-// WebSocket 广播函数
-function broadcastToClients(data) {
-  const message = JSON.stringify(data);
-  wsClients.forEach(client => {
-    if (client.readyState === 1) { // WebSocket.OPEN
-      try {
-        client.send(message);
-      } catch (error) {
-        log('ERROR', 'WebSocket 发送失败:', error.message);
-      }
-    }
-  });
-}
-
-// 加载配置
-async function loadState() {
-  try {
-    const data = await fs.readFile(STATE_FILE, 'utf-8');
-    const state = JSON.parse(data);
-
-    if (!state.uid || !state.token) {
-      log('WARN', 'state.json 缺少 uid 或 token');
-      return false;
-    }
-
-    // 处理 UID 格式
-    const rawUid = state.uid.trim();
-    if (rawUid.startsWith('game_')) {
-      config.userId = rawUid.replace('game_', '');
-      config.uid = `game_${config.userId}`;
-    } else {
-      config.userId = rawUid;
-      config.uid = `game_${rawUid}`;
-    }
-
-    config.token = state.token;
-    log('INFO', `已加载配置: UID=${config.uid}, UserID=${config.userId}`);
-    return true;
-  } catch (error) {
-    log('ERROR', '加载配置失败:', error.message);
-    return false;
-  }
-}
-
-// 请求 IM 签名
-async function requestGameSign() {
-  try {
-    const url = `${API_BASE}/user/game_sign`;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        uid: config.uid,
-        token: config.token
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-
-    const result = await response.json();
-    if (result.code !== 1 || !result.data) {
-      throw new Error(`API 返回错误: ${result.msg || 'Unknown error'}`);
-    }
-
-    config.appId = result.data.appid;
-    config.sign = result.data.sign;
-    log('INFO', '✓ 获取 IM 签名成功');
-    return true;
-  } catch (error) {
-    log('ERROR', '✗ 获取 IM 签名失败:', error.message);
-    return false;
-  }
-}
-
-// 初始化 IM
-async function initIM() {
-  try {
-    log('INFO', '正在初始化 IM 客户端...');
-
-    // 加载配置
-    const loaded = await loadState();
-    if (!loaded) {
-      log('ERROR', '配置加载失败，无法初始化 IM');
-      return false;
-    }
-
-    // 获取签名
-    const signOk = await requestGameSign();
-    if (!signOk) {
-      log('ERROR', '获取签名失败，无法初始化 IM');
-      return false;
-    }
-
-    // 销毁旧实例
-    if (chat) {
-      try {
-        await chat.logout();
-        await chat.destroy();
-      } catch (e) {
-        log('WARN', '销毁旧实例失败:', e.message);
-      }
-    }
-
-    // 创建 IM 实例
-    chat = TencentCloudChat.create({
-      SDKAppID: parseInt(config.appId)
-    });
-
-    // 设置日志级别
-    chat.setLogLevel(1); // 0: 普通, 1: 发布, 2: 告警, 3: 错误
-
-    // 注册事件监听
-    chat.on(TencentCloudChat.EVENT.SDK_READY, () => {
-      isReady = true;
-      log('INFO', '✓ IM SDK 就绪');
-      log('INFO', `当前登录用户: ${chat.getLoginUser()}`);
-
-      // 广播状态变化
-      broadcastToClients({
-        type: 'status',
-        data: {
-          isReady: true,
-          event: 'SDK_READY',
-          user: chat.getLoginUser()
-        }
-      });
-    });
-
-    chat.on(TencentCloudChat.EVENT.SDK_NOT_READY, () => {
-      isReady = false;
-      log('WARN', '⚠ IM SDK 未就绪');
-
-      // 广播状态变化
-      broadcastToClients({
-        type: 'status',
-        data: {
-          isReady: false,
-          event: 'SDK_NOT_READY'
-        }
-      });
-    });
-
-    chat.on(TencentCloudChat.EVENT.KICKED_OUT, async () => {
-      isReady = false;
-      log('WARN', '⚠ IM 被踢下线，5秒后重连...');
-
-      // 广播被踢下线事件
-      broadcastToClients({
-        type: 'status',
-        data: {
-          isReady: false,
-          event: 'KICKED_OUT',
-          message: 'IM 被踢下线，正在重连...'
-        }
-      });
-
-      setTimeout(() => {
-        initIM().catch(e => log('ERROR', '重连失败:', e));
-      }, 5000);
-    });
-
-    chat.on(TencentCloudChat.EVENT.NET_STATE_CHANGE, (event) => {
-      log('INFO', '网络状态变化:', event.data.state);
-
-      // 广播网络状态变化
-      broadcastToClients({
-        type: 'network',
-        data: {
-          state: event.data.state
-        }
-      });
-    });
-
-    chat.on(TencentCloudChat.EVENT.MESSAGE_RECEIVED, (event) => {
-      log('INFO', '📩 收到消息:', event.data.length, '条');
-
-      // 广播收到的消息
-      broadcastToClients({
-        type: 'message',
-        data: {
-          count: event.data.length,
-          messages: event.data.map(msg => ({
-            from: msg.from,
-            to: msg.to,
-            type: msg.type,
-            payload: msg.payload,
-            time: msg.time
-          }))
-        }
-      });
-    });
-
-    chat.on(TencentCloudChat.EVENT.ERROR, (event) => {
-      log('ERROR', 'IM 错误:', event.data);
-    });
-
-    // 登录 IM
-    log('INFO', '正在登录 IM...');
-    const loginRes = await chat.login({
-      userID: config.uid,
-      userSig: config.sign
-    });
-
-    if (loginRes.data?.repeatLogin) {
-      log('WARN', '重复登录:', loginRes.data.errorInfo);
-    }
-
-    // 等待 SDK 就绪
-    await waitReady(15000);
-
-    log('INFO', '✓ IM 客户端初始化成功');
-    log('INFO', `  UID: ${config.uid}`);
-    log('INFO', `  UserID: ${config.userId}`);
-    log('INFO', `  AppID: ${config.appId}`);
-    return true;
-  } catch (error) {
-    log('ERROR', '✗ IM 初始化失败:', error.message);
-    isReady = false;
-    return false;
-  }
-}
-
-// 等待 SDK 就绪
-function waitReady(timeout = 15000) {
-  if (isReady) return Promise.resolve();
-
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('等待 SDK_READY 超时'));
-    }, timeout);
-
-    const onReady = () => {
-      isReady = true;
-      cleanup();
-      resolve();
-    };
-
-    const cleanup = () => {
-      clearTimeout(timer);
-      if (chat) {
-        chat.off(TencentCloudChat.EVENT.SDK_READY, onReady);
-      }
-    };
-
-    if (chat) {
-      chat.on(TencentCloudChat.EVENT.SDK_READY, onReady);
-    }
-  });
-}
-
-// 发送 IM 消息
-async function sendIMMessage(commandId) {
-  if (!chat || !isReady) {
-    throw new Error('IM 未就绪');
+/**
+ * IM 会话类 - 封装单个用户的 IM 连接
+ */
+class IMSession {
+  constructor(userId, uid, token, appId, sign) {
+    this.userId = userId;
+    this.uid = uid;
+    this.token = token;
+    this.appId = appId;
+    this.sign = sign;
+    this.chat = null;
+    this.isReady = false;
+    this.createdAt = Date.now();
+    this.lastAccessTime = Date.now();
+    this.eventHandlers = new Map(); // 存储事件处理器引用，用于清理
   }
 
-  try {
-    // 构造消息内容
-    const messageText = JSON.stringify({
-      code: 'game_cmd',
-      id: commandId,
-      token: config.token
-    });
+  /**
+   * 初始化 IM 会话
+   */
+  async init(broadcastCallback) {
+    try {
+      log('INFO', `[${this.userId}] 正在初始化 IM 会话...`);
 
-    // 创建文本消息
-    const message = chat.createTextMessage({
-      to: config.userId,
-      conversationType: TencentCloudChat.TYPES.CONV_C2C,
-      payload: {
-        text: messageText
+      // 创建 IM 实例
+      this.chat = TencentCloudChat.create({
+        SDKAppID: parseInt(this.appId)
+      });
+
+      this.chat.setLogLevel(1);
+
+      // 注册事件监听器并保存引用
+      const onReady = () => {
+        this.isReady = true;
+        log('INFO', `[${this.userId}] ✓ IM SDK 就绪`);
+        if (broadcastCallback) {
+          broadcastCallback({
+            type: 'status',
+            userId: this.userId,
+            data: {
+              isReady: true,
+              event: 'SDK_READY',
+              user: this.chat.getLoginUser()
+            }
+          });
+        }
+      };
+
+      const onNotReady = () => {
+        this.isReady = false;
+        log('WARN', `[${this.userId}] ⚠ IM SDK 未就绪`);
+        if (broadcastCallback) {
+          broadcastCallback({
+            type: 'status',
+            userId: this.userId,
+            data: {
+              isReady: false,
+              event: 'SDK_NOT_READY'
+            }
+          });
+        }
+      };
+
+      const onKickedOut = () => {
+        this.isReady = false;
+        log('WARN', `[${this.userId}] ⚠ IM 被踢下线`);
+        if (broadcastCallback) {
+          broadcastCallback({
+            type: 'status',
+            userId: this.userId,
+            data: {
+              isReady: false,
+              event: 'KICKED_OUT',
+              message: 'IM 被踢下线'
+            }
+          });
+        }
+      };
+
+      const onNetStateChange = (event) => {
+        log('INFO', `[${this.userId}] 网络状态变化:`, event.data.state);
+        if (broadcastCallback) {
+          broadcastCallback({
+            type: 'network',
+            userId: this.userId,
+            data: {
+              state: event.data.state
+            }
+          });
+        }
+      };
+
+      const onMessageReceived = (event) => {
+        log('INFO', `[${this.userId}] 📩 收到消息:`, event.data.length, '条');
+        if (broadcastCallback) {
+          broadcastCallback({
+            type: 'message',
+            userId: this.userId,
+            data: {
+              count: event.data.length,
+              messages: event.data.map(msg => ({
+                from: msg.from,
+                to: msg.to,
+                type: msg.type,
+                payload: msg.payload,
+                time: msg.time
+              }))
+            }
+          });
+        }
+      };
+
+      const onError = (event) => {
+        log('ERROR', `[${this.userId}] IM 错误:`, event.data);
+      };
+
+      // 注册事件并保存处理器引用
+      this.chat.on(TencentCloudChat.EVENT.SDK_READY, onReady);
+      this.chat.on(TencentCloudChat.EVENT.SDK_NOT_READY, onNotReady);
+      this.chat.on(TencentCloudChat.EVENT.KICKED_OUT, onKickedOut);
+      this.chat.on(TencentCloudChat.EVENT.NET_STATE_CHANGE, onNetStateChange);
+      this.chat.on(TencentCloudChat.EVENT.MESSAGE_RECEIVED, onMessageReceived);
+      this.chat.on(TencentCloudChat.EVENT.ERROR, onError);
+
+      // 保存处理器引用
+      this.eventHandlers.set('SDK_READY', onReady);
+      this.eventHandlers.set('SDK_NOT_READY', onNotReady);
+      this.eventHandlers.set('KICKED_OUT', onKickedOut);
+      this.eventHandlers.set('NET_STATE_CHANGE', onNetStateChange);
+      this.eventHandlers.set('MESSAGE_RECEIVED', onMessageReceived);
+      this.eventHandlers.set('ERROR', onError);
+
+      // 登录 IM
+      log('INFO', `[${this.userId}] 正在登录 IM...`);
+      const loginRes = await this.chat.login({
+        userID: this.uid,
+        userSig: this.sign
+      });
+
+      if (loginRes.data?.repeatLogin) {
+        log('WARN', `[${this.userId}] 重复登录:`, loginRes.data.errorInfo);
+      }
+
+      // 等待 SDK 就绪
+      await this.waitReady(15000);
+
+      log('INFO', `[${this.userId}] ✓ IM 会话初始化成功`);
+      return true;
+    } catch (error) {
+      log('ERROR', `[${this.userId}] ✗ IM 会话初始化失败:`, error.message);
+      this.isReady = false;
+      throw error;
+    }
+  }
+
+  /**
+   * 等待 SDK 就绪
+   */
+  waitReady(timeout = 15000) {
+    if (this.isReady) return Promise.resolve();
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error('等待 SDK_READY 超时'));
+      }, timeout);
+
+      const onReady = () => {
+        this.isReady = true;
+        cleanup();
+        resolve();
+      };
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        if (this.chat) {
+          this.chat.off(TencentCloudChat.EVENT.SDK_READY, onReady);
+        }
+      };
+
+      if (this.chat) {
+        this.chat.on(TencentCloudChat.EVENT.SDK_READY, onReady);
       }
     });
+  }
 
-    // 发送消息
-    const sendRes = await chat.sendMessage(message);
+  /**
+   * 发送 IM 消息
+   */
+  async sendMessage(commandId) {
+    this.lastAccessTime = Date.now();
 
-    log('INFO', '✓ 指令发送成功:', commandId);
+    if (!this.chat || !this.isReady) {
+      throw new Error('IM 会话未就绪');
+    }
+
+    try {
+      const messageText = JSON.stringify({
+        code: 'game_cmd',
+        id: commandId,
+        token: this.token
+      });
+
+      const message = this.chat.createTextMessage({
+        to: this.userId,
+        conversationType: TencentCloudChat.TYPES.CONV_C2C,
+        payload: {
+          text: messageText
+        }
+      });
+
+      const sendRes = await this.chat.sendMessage(message);
+
+      log('INFO', `[${this.userId}] ✓ 指令发送成功:`, commandId);
+      return {
+        success: true,
+        message: '指令发送成功',
+        data: sendRes
+      };
+    } catch (error) {
+      log('ERROR', `[${this.userId}] ✗ 指令发送失败:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * 销毁会话
+   */
+  async destroy() {
+    try {
+      log('INFO', `[${this.userId}] 正在销毁 IM 会话...`);
+
+      if (this.chat) {
+        // 移除所有事件监听器
+        for (const [eventName, handler] of this.eventHandlers) {
+          const eventType = TencentCloudChat.EVENT[eventName];
+          if (eventType) {
+            this.chat.off(eventType, handler);
+          }
+        }
+        this.eventHandlers.clear();
+
+        // 登出并销毁
+        try {
+          await this.chat.logout();
+          await this.chat.destroy();
+        } catch (e) {
+          log('WARN', `[${this.userId}] 销毁 IM 实例时出错:`, e.message);
+        }
+
+        this.chat = null;
+      }
+
+      this.isReady = false;
+      log('INFO', `[${this.userId}] ✓ IM 会话已销毁`);
+    } catch (error) {
+      log('ERROR', `[${this.userId}] 销毁会话失败:`, error.message);
+    }
+  }
+
+  /**
+   * 检查会话是否超时
+   */
+  isExpired() {
+    return Date.now() - this.lastAccessTime > SESSION_TIMEOUT;
+  }
+
+  /**
+   * 获取会话信息
+   */
+  getInfo() {
     return {
-      success: true,
-      message: '指令发送成功',
-      data: sendRes
+      userId: this.userId,
+      uid: this.uid,
+      appId: this.appId,
+      isReady: this.isReady,
+      createdAt: this.createdAt,
+      lastAccessTime: this.lastAccessTime,
+      age: Date.now() - this.createdAt
     };
-  } catch (error) {
-    log('ERROR', '✗ 指令发送失败:', error.message);
-    throw error;
   }
 }
 
-// API 路由
+/**
+ * 会话管理器 - 管理所有用户的 IM 会话
+ */
+class SessionManager {
+  constructor() {
+    this.sessions = new Map(); // userId -> IMSession
+    this.wsClients = new Set(); // WebSocket 客户端集合
+    this.startCleanupTask();
+  }
 
-// 健康检查
+  /**
+   * 获取或创建会话
+   */
+  async getOrCreateSession(userId, uid, token) {
+    // 使用锁保护会话创建过程
+    return await lock.acquire(`session:${userId}`, async () => {
+      // 检查会话数限制
+      if (!this.sessions.has(userId) && this.sessions.size >= MAX_SESSIONS) {
+        throw new Error(`会话数已达上限 (${MAX_SESSIONS})，请稍后再试`);
+      }
+
+      // 如果会话已存在，检查 token 是否匹配
+      if (this.sessions.has(userId)) {
+        const existingSession = this.sessions.get(userId);
+
+        // 如果 token 不同，需要重新登录
+        if (existingSession.token !== token) {
+          log('INFO', `[${userId}] Token 已变更，重新创建会话`);
+          await this.destroySession(userId);
+        } else {
+          // Token 相同，更新访问时间并返回现有会话
+          existingSession.lastAccessTime = Date.now();
+          log('INFO', `[${userId}] 复用现有会话`);
+          return existingSession;
+        }
+      }
+
+      // 创建新会话
+      log('INFO', `[${userId}] 创建新会话`);
+
+      // 获取签名
+      const signData = await this.requestGameSign(uid, token);
+      if (!signData) {
+        throw new Error('获取 IM 签名失败');
+      }
+
+      // 创建会话实例
+      const session = new IMSession(
+        userId,
+        uid,
+        token,
+        signData.appId,
+        signData.sign
+      );
+
+      // 初始化会话
+      await session.init((data) => this.broadcastToClients(data));
+
+      // 保存会话
+      this.sessions.set(userId, session);
+      log('INFO', `[${userId}] ✓ 会话创建成功 (当前会话数: ${this.sessions.size})`);
+
+      return session;
+    });
+  }
+
+  /**
+   * 获取已存在的会话
+   */
+  getSession(userId) {
+    const session = this.sessions.get(userId);
+    if (session) {
+      session.lastAccessTime = Date.now();
+    }
+    return session;
+  }
+
+  /**
+   * 销毁会话
+   */
+  async destroySession(userId) {
+    return await lock.acquire(`session:${userId}`, async () => {
+      const session = this.sessions.get(userId);
+      if (session) {
+        await session.destroy();
+        this.sessions.delete(userId);
+        log('INFO', `[${userId}] 会话已移除 (当前会话数: ${this.sessions.size})`);
+        return true;
+      }
+      return false;
+    });
+  }
+
+  /**
+   * 请求游戏签名
+   */
+  async requestGameSign(uid, token) {
+    try {
+      const url = `${API_BASE}/user/game_sign`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uid, token })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const result = await response.json();
+      if (result.code !== 1 || !result.data) {
+        throw new Error(`API 返回错误: ${result.msg || 'Unknown error'}`);
+      }
+
+      log('INFO', '✓ 获取 IM 签名成功');
+      return {
+        appId: result.data.appid,
+        sign: result.data.sign
+      };
+    } catch (error) {
+      log('ERROR', '✗ 获取 IM 签名失败:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * 广播消息到所有 WebSocket 客户端
+   */
+  broadcastToClients(data) {
+    const message = JSON.stringify(data);
+    this.wsClients.forEach(client => {
+      if (client.readyState === 1) { // WebSocket.OPEN
+        try {
+          client.send(message);
+        } catch (error) {
+          log('ERROR', 'WebSocket 发送失败:', error.message);
+        }
+      }
+    });
+  }
+
+  /**
+   * 添加 WebSocket 客户端
+   */
+  addWebSocketClient(ws) {
+    if (this.wsClients.size >= MAX_WS_CONNECTIONS) {
+      throw new Error(`WebSocket 连接数已达上限 (${MAX_WS_CONNECTIONS})`);
+    }
+    this.wsClients.add(ws);
+    log('INFO', `WebSocket 客户端已添加 (当前连接数: ${this.wsClients.size})`);
+  }
+
+  /**
+   * 移除 WebSocket 客户端
+   */
+  removeWebSocketClient(ws) {
+    this.wsClients.delete(ws);
+    log('INFO', `WebSocket 客户端已移除 (当前连接数: ${this.wsClients.size})`);
+  }
+
+  /**
+   * 启动会话清理任务
+   */
+  startCleanupTask() {
+    setInterval(async () => {
+      log('DEBUG', '开始清理过期会话...');
+      const expiredSessions = [];
+
+      for (const [userId, session] of this.sessions) {
+        if (session.isExpired()) {
+          expiredSessions.push(userId);
+        }
+      }
+
+      for (const userId of expiredSessions) {
+        log('INFO', `[${userId}] 会话已超时，正在清理...`);
+        await this.destroySession(userId);
+      }
+
+      if (expiredSessions.length > 0) {
+        log('INFO', `清理了 ${expiredSessions.length} 个过期会话`);
+      }
+    }, SESSION_CLEANUP_INTERVAL);
+  }
+
+  /**
+   * 获取所有会话信息
+   */
+  getAllSessionsInfo() {
+    const info = [];
+    for (const session of this.sessions.values()) {
+      info.push(session.getInfo());
+    }
+    return info;
+  }
+
+  /**
+   * 获取统计信息
+   */
+  getStats() {
+    return {
+      totalSessions: this.sessions.size,
+      maxSessions: MAX_SESSIONS,
+      wsConnections: this.wsClients.size,
+      maxWsConnections: MAX_WS_CONNECTIONS,
+      sessions: this.getAllSessionsInfo()
+    };
+  }
+}
+
+// 创建全局会话管理器
+const sessionManager = new SessionManager();
+
+/**
+ * 处理 UID 格式
+ */
+function processUid(rawUid) {
+  const trimmed = rawUid.trim();
+  if (trimmed.startsWith('game_')) {
+    return {
+      userId: trimmed.replace('game_', ''),
+      uid: trimmed
+    };
+  } else {
+    return {
+      userId: trimmed,
+      uid: `game_${trimmed}`
+    };
+  }
+}
+
+// ============================================================================
+// HTTP API 路由
+// ============================================================================
+
+/**
+ * 健康检查
+ */
 app.get('/health', (req, res) => {
+  const stats = sessionManager.getStats();
   res.json({
     status: 'ok',
-    imReady: isReady,
-    uid: config.uid,
-    userId: config.userId
+    timestamp: Date.now(),
+    stats
   });
 });
 
-// 获取状态
+/**
+ * 获取状态（向后兼容）
+ */
 app.get('/api/status', (req, res) => {
+  const stats = sessionManager.getStats();
   res.json({
-    isReady,
-    config: {
-      uid: config.uid,
-      userId: config.userId,
-      appId: config.appId,
-      hasToken: !!config.token,
-      hasSign: !!config.sign
-    }
+    stats,
+    // 向后兼容字段
+    isReady: stats.totalSessions > 0
   });
 });
 
-// 发送指令
+/**
+ * 发送指令（需要提供 userId）
+ */
 app.post('/api/send-command', async (req, res) => {
   try {
-    const { commandId } = req.body;
+    const { userId, commandId } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: '缺少 userId 参数'
+      });
+    }
 
     if (!commandId) {
       return res.status(400).json({
@@ -369,14 +603,24 @@ app.post('/api/send-command', async (req, res) => {
       });
     }
 
-    if (!isReady) {
-      return res.status(503).json({
+    // 获取会话
+    const session = sessionManager.getSession(userId);
+    if (!session) {
+      return res.status(404).json({
         success: false,
-        message: 'IM 未就绪'
+        message: '会话不存在，请先登录'
       });
     }
 
-    const result = await sendIMMessage(commandId);
+    if (!session.isReady) {
+      return res.status(503).json({
+        success: false,
+        message: 'IM 会话未就绪'
+      });
+    }
+
+    // 发送消息
+    const result = await session.sendMessage(commandId);
     res.json(result);
   } catch (error) {
     log('ERROR', 'API 错误:', error.message);
@@ -387,184 +631,38 @@ app.post('/api/send-command', async (req, res) => {
   }
 });
 
-// 重新初始化
-app.post('/api/reinit', async (req, res) => {
-  try {
-    log('INFO', '收到重新初始化请求');
-    const success = await initIM();
-    res.json({
-      success,
-      message: success ? 'IM 重新初始化成功' : 'IM 重新初始化失败'
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-});
-
-// 使用自定义凭证登录
+/**
+ * 登录（创建或复用会话）
+ */
 app.post('/api/login', async (req, res) => {
   try {
-    const { uid, token } = req.body;
+    const { uid: rawUid, token } = req.body;
 
-    if (!uid || !token) {
+    if (!rawUid || !token) {
       return res.status(400).json({
         success: false,
         message: '缺少 uid 或 token 参数'
       });
     }
 
-    log('INFO', `收到登录请求: UID=${uid}`);
+    const { userId, uid } = processUid(rawUid);
+    log('INFO', `收到登录请求: UID=${uid}, UserID=${userId}`);
 
-    // 临时更新配置
-    const rawUid = uid.trim();
-    if (rawUid.startsWith('game_')) {
-      config.userId = rawUid.replace('game_', '');
-      config.uid = rawUid;
-    } else {
-      config.userId = rawUid;
-      config.uid = `game_${rawUid}`;
-    }
-    config.token = token;
+    // 获取或创建会话
+    const session = await sessionManager.getOrCreateSession(userId, uid, token);
 
-    log('INFO', `使用自定义凭证: UID=${config.uid}, UserID=${config.userId}`);
-
-    // 获取签名
-    const signOk = await requestGameSign();
-    if (!signOk) {
-      return res.status(500).json({
-        success: false,
-        message: '获取 IM 签名失败'
-      });
-    }
-
-    // 销毁旧实例
-    if (chat) {
-      try {
-        await chat.logout();
-        await chat.destroy();
-      } catch (e) {
-        log('WARN', '销毁旧实例失败:', e.message);
-      }
-    }
-
-    // 创建 IM 实例
-    chat = TencentCloudChat.create({
-      SDKAppID: parseInt(config.appId)
-    });
-
-    // 设置日志级别
-    chat.setLogLevel(1);
-
-    // 注册事件监听
-    chat.on(TencentCloudChat.EVENT.SDK_READY, () => {
-      isReady = true;
-      log('INFO', '✓ IM SDK 就绪');
-      log('INFO', `当前登录用户: ${chat.getLoginUser()}`);
-
-      broadcastToClients({
-        type: 'status',
-        data: {
-          isReady: true,
-          event: 'SDK_READY',
-          user: chat.getLoginUser()
-        }
-      });
-    });
-
-    chat.on(TencentCloudChat.EVENT.SDK_NOT_READY, () => {
-      isReady = false;
-      log('WARN', '⚠ IM SDK 未就绪');
-
-      broadcastToClients({
-        type: 'status',
-        data: {
-          isReady: false,
-          event: 'SDK_NOT_READY'
-        }
-      });
-    });
-
-    chat.on(TencentCloudChat.EVENT.KICKED_OUT, async () => {
-      isReady = false;
-      log('WARN', '⚠ IM 被踢下线，5秒后重连...');
-
-      broadcastToClients({
-        type: 'status',
-        data: {
-          isReady: false,
-          event: 'KICKED_OUT',
-          message: 'IM 被踢下线，正在重连...'
-        }
-      });
-
-      setTimeout(() => {
-        initIM().catch(e => log('ERROR', '重连失败:', e));
-      }, 5000);
-    });
-
-    chat.on(TencentCloudChat.EVENT.NET_STATE_CHANGE, (event) => {
-      log('INFO', '网络状态变化:', event.data.state);
-
-      broadcastToClients({
-        type: 'network',
-        data: {
-          state: event.data.state
-        }
-      });
-    });
-
-    chat.on(TencentCloudChat.EVENT.MESSAGE_RECEIVED, (event) => {
-      log('INFO', '📩 收到消息:', event.data.length, '条');
-
-      broadcastToClients({
-        type: 'message',
-        data: {
-          count: event.data.length,
-          messages: event.data.map(msg => ({
-            from: msg.from,
-            to: msg.to,
-            type: msg.type,
-            payload: msg.payload,
-            time: msg.time
-          }))
-        }
-      });
-    });
-
-    chat.on(TencentCloudChat.EVENT.ERROR, (event) => {
-      log('ERROR', 'IM 错误:', event.data);
-    });
-
-    // 登录 IM
-    log('INFO', '正在登录 IM...');
-    const loginRes = await chat.login({
-      userID: config.uid,
-      userSig: config.sign
-    });
-
-    if (loginRes.data?.repeatLogin) {
-      log('WARN', '重复登录:', loginRes.data.errorInfo);
-    }
-
-    // 等待 SDK 就绪
-    await waitReady(15000);
-
-    log('INFO', '✓ IM 登录成功');
     res.json({
       success: true,
       message: 'IM 登录成功',
       data: {
-        uid: config.uid,
-        userId: config.userId,
-        appId: config.appId
+        userId: session.userId,
+        uid: session.uid,
+        appId: session.appId,
+        isReady: session.isReady
       }
     });
   } catch (error) {
     log('ERROR', '✗ IM 登录失败:', error.message);
-    isReady = false;
     res.status(500).json({
       success: false,
       message: error.message
@@ -572,91 +670,96 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+/**
+ * 登出（销毁会话）
+ */
+app.post('/api/logout', async (req, res) => {
+  try {
+    const { userId } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: '缺少 userId 参数'
+      });
+    }
+
+    const destroyed = await sessionManager.destroySession(userId);
+
+    if (destroyed) {
+      res.json({
+        success: true,
+        message: '登出成功'
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        message: '会话不存在'
+      });
+    }
+  } catch (error) {
+    log('ERROR', '登出失败:', error.message);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+/**
+ * 获取会话详情
+ */
+app.get('/api/session/:userId', (req, res) => {
+  try {
+    const { userId } = req.params;
+    const session = sessionManager.getSession(userId);
+
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: '会话不存在'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: session.getInfo()
+    });
+  } catch (error) {
+    log('ERROR', '获取会话详情失败:', error.message);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// ============================================================================
 // WebSocket 消息处理
-function handleWebSocketMessage(ws, message) {
+// ============================================================================
+
+/**
+ * 处理 WebSocket 消息
+ */
+async function handleWebSocketMessage(ws, message) {
   try {
     const data = JSON.parse(message);
-    log('INFO', 'WebSocket 收到消息:', data.type);
+    log('INFO', 'WebSocket 收到消息:', data.type, data.userId ? `(用户: ${data.userId})` : '');
 
     switch (data.type) {
       case 'ping':
-        // 心跳响应
         ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
         break;
 
       case 'getStatus':
-        // 获取状态
+        const stats = sessionManager.getStats();
         ws.send(JSON.stringify({
           type: 'status',
-          data: {
-            isReady,
-            config: {
-              uid: config.uid,
-              userId: config.userId,
-              appId: config.appId,
-              hasToken: !!config.token,
-              hasSign: !!config.sign
-            }
-          }
+          data: stats
         }));
         break;
 
-      case 'sendCommand':
-        // 发送指令
-        if (!data.commandId) {
-          ws.send(JSON.stringify({
-            type: 'error',
-            message: '缺少 commandId 参数'
-          }));
-          return;
-        }
-
-        if (!isReady) {
-          ws.send(JSON.stringify({
-            type: 'error',
-            message: 'IM 未就绪'
-          }));
-          return;
-        }
-
-        sendIMMessage(data.commandId)
-          .then(result => {
-            ws.send(JSON.stringify({
-              type: 'commandResult',
-              success: true,
-              data: result
-            }));
-          })
-          .catch(error => {
-            ws.send(JSON.stringify({
-              type: 'commandResult',
-              success: false,
-              message: error.message
-            }));
-          });
-        break;
-
-      case 'reinit':
-        // 重新初始化
-        initIM()
-          .then(success => {
-            ws.send(JSON.stringify({
-              type: 'reinitResult',
-              success,
-              message: success ? 'IM 重新初始化成功' : 'IM 重新初始化失败'
-            }));
-          })
-          .catch(error => {
-            ws.send(JSON.stringify({
-              type: 'reinitResult',
-              success: false,
-              message: error.message
-            }));
-          });
-        break;
-
       case 'login':
-        // 使用自定义凭证登录
         if (!data.uid || !data.token) {
           ws.send(JSON.stringify({
             type: 'error',
@@ -665,132 +768,105 @@ function handleWebSocketMessage(ws, message) {
           return;
         }
 
-        (async () => {
-          try {
-            log('INFO', `WebSocket 收到登录请求: UID=${data.uid}`);
+        try {
+          const { userId, uid } = processUid(data.uid);
+          log('INFO', `WebSocket 收到登录请求: UID=${uid}, UserID=${userId}`);
 
-            // 临时更新配置
-            const rawUid = data.uid.trim();
-            if (rawUid.startsWith('game_')) {
-              config.userId = rawUid.replace('game_', '');
-              config.uid = rawUid;
-            } else {
-              config.userId = rawUid;
-              config.uid = `game_${rawUid}`;
+          const session = await sessionManager.getOrCreateSession(userId, uid, data.token);
+
+          ws.send(JSON.stringify({
+            type: 'loginResult',
+            success: true,
+            message: 'IM 登录成功',
+            data: {
+              userId: session.userId,
+              uid: session.uid,
+              appId: session.appId,
+              isReady: session.isReady
             }
-            config.token = data.token;
+          }));
+        } catch (error) {
+          ws.send(JSON.stringify({
+            type: 'loginResult',
+            success: false,
+            message: error.message
+          }));
+        }
+        break;
 
-            log('INFO', `使用自定义凭证: UID=${config.uid}, UserID=${config.userId}`);
+      case 'logout':
+        if (!data.userId) {
+          ws.send(JSON.stringify({
+            type: 'error',
+            message: '缺少 userId 参数'
+          }));
+          return;
+        }
 
-            // 获取签名
-            const signOk = await requestGameSign();
-            if (!signOk) {
-              ws.send(JSON.stringify({
-                type: 'loginResult',
-                success: false,
-                message: '获取 IM 签名失败'
-              }));
-              return;
-            }
+        try {
+          const destroyed = await sessionManager.destroySession(data.userId);
+          ws.send(JSON.stringify({
+            type: 'logoutResult',
+            success: destroyed,
+            message: destroyed ? '登出成功' : '会话不存在'
+          }));
+        } catch (error) {
+          ws.send(JSON.stringify({
+            type: 'logoutResult',
+            success: false,
+            message: error.message
+          }));
+        }
+        break;
 
-            // 销毁旧实例
-            if (chat) {
-              try {
-                await chat.logout();
-                await chat.destroy();
-              } catch (e) {
-                log('WARN', '销毁旧实例失败:', e.message);
-              }
-            }
+      case 'sendCommand':
+        if (!data.userId) {
+          ws.send(JSON.stringify({
+            type: 'error',
+            message: '缺少 userId 参数'
+          }));
+          return;
+        }
 
-            // 创建 IM 实例
-            chat = TencentCloudChat.create({
-              SDKAppID: parseInt(config.appId)
-            });
+        if (!data.commandId) {
+          ws.send(JSON.stringify({
+            type: 'error',
+            message: '缺少 commandId 参数'
+          }));
+          return;
+        }
 
-            chat.setLogLevel(1);
-
-            // 注册事件监听
-            chat.on(TencentCloudChat.EVENT.SDK_READY, () => {
-              isReady = true;
-              log('INFO', '✓ IM SDK 就绪');
-              broadcastToClients({
-                type: 'status',
-                data: {
-                  isReady: true,
-                  event: 'SDK_READY',
-                  user: chat.getLoginUser()
-                }
-              });
-            });
-
-            chat.on(TencentCloudChat.EVENT.SDK_NOT_READY, () => {
-              isReady = false;
-              broadcastToClients({
-                type: 'status',
-                data: { isReady: false, event: 'SDK_NOT_READY' }
-              });
-            });
-
-            chat.on(TencentCloudChat.EVENT.KICKED_OUT, async () => {
-              isReady = false;
-              broadcastToClients({
-                type: 'status',
-                data: { isReady: false, event: 'KICKED_OUT' }
-              });
-            });
-
-            chat.on(TencentCloudChat.EVENT.NET_STATE_CHANGE, (event) => {
-              broadcastToClients({
-                type: 'network',
-                data: { state: event.data.state }
-              });
-            });
-
-            chat.on(TencentCloudChat.EVENT.MESSAGE_RECEIVED, (event) => {
-              broadcastToClients({
-                type: 'message',
-                data: {
-                  count: event.data.length,
-                  messages: event.data.map(msg => ({
-                    from: msg.from,
-                    to: msg.to,
-                    type: msg.type,
-                    payload: msg.payload,
-                    time: msg.time
-                  }))
-                }
-              });
-            });
-
-            // 登录 IM
-            await chat.login({
-              userID: config.uid,
-              userSig: config.sign
-            });
-
-            // 等待 SDK 就绪
-            await waitReady(15000);
-
+        try {
+          const session = sessionManager.getSession(data.userId);
+          if (!session) {
             ws.send(JSON.stringify({
-              type: 'loginResult',
-              success: true,
-              message: 'IM 登录成功',
-              data: {
-                uid: config.uid,
-                userId: config.userId,
-                appId: config.appId
-              }
+              type: 'error',
+              message: '会话不存在，请先登录'
             }));
-          } catch (error) {
-            log('ERROR', '✗ IM 登录失败:', error.message);
-            ws.send(JSON.stringify({
-              type: 'loginResult',
-              success: false,
-              message: error.message
-            }));
+            return;
           }
-        })();
+
+          if (!session.isReady) {
+            ws.send(JSON.stringify({
+              type: 'error',
+              message: 'IM 会话未就绪'
+            }));
+            return;
+          }
+
+          const result = await session.sendMessage(data.commandId);
+          ws.send(JSON.stringify({
+            type: 'commandResult',
+            success: true,
+            data: result
+          }));
+        } catch (error) {
+          ws.send(JSON.stringify({
+            type: 'commandResult',
+            success: false,
+            message: error.message
+          }));
+        }
         break;
 
       default:
@@ -808,11 +884,14 @@ function handleWebSocketMessage(ws, message) {
   }
 }
 
-// 启动服务器
-async function startServer() {
-  // 初始化 IM
-  await initIM();
+// ============================================================================
+// 服务器启动
+// ============================================================================
 
+/**
+ * 启动服务器
+ */
+async function startServer() {
   // 创建 HTTP 服务器
   const server = createServer(app);
 
@@ -822,65 +901,66 @@ async function startServer() {
   // WebSocket 连接处理
   wss.on('connection', (ws, req) => {
     const clientIp = req.socket.remoteAddress;
-    log('INFO', `WebSocket 客户端连接: ${clientIp}`);
 
-    // 添加到客户端集合
-    wsClients.add(ws);
+    try {
+      sessionManager.addWebSocketClient(ws);
+      log('INFO', `WebSocket 客户端连接: ${clientIp}`);
 
-    // 发送欢迎消息
-    ws.send(JSON.stringify({
-      type: 'connected',
-      message: 'WebSocket 连接成功',
-      data: {
-        isReady,
-        uid: config.uid,
-        userId: config.userId
-      }
-    }));
+      // 发送欢迎消息
+      ws.send(JSON.stringify({
+        type: 'connected',
+        message: 'WebSocket 连接成功',
+        data: sessionManager.getStats()
+      }));
 
-    // 消息处理
-    ws.on('message', (message) => {
-      handleWebSocketMessage(ws, message.toString());
-    });
+      // 消息处理
+      ws.on('message', (message) => {
+        handleWebSocketMessage(ws, message.toString()).catch(error => {
+          log('ERROR', 'WebSocket 消息处理异常:', error);
+        });
+      });
 
-    // 错误处理
-    ws.on('error', (error) => {
-      log('ERROR', 'WebSocket 错误:', error.message);
-    });
+      // 错误处理
+      ws.on('error', (error) => {
+        log('ERROR', 'WebSocket 错误:', error.message);
+      });
 
-    // 断开连接
-    ws.on('close', () => {
-      log('INFO', `WebSocket 客户端断开: ${clientIp}`);
-      wsClients.delete(ws);
-    });
+      // 断开连接
+      ws.on('close', () => {
+        log('INFO', `WebSocket 客户端断开: ${clientIp}`);
+        sessionManager.removeWebSocketClient(ws);
+      });
+    } catch (error) {
+      log('ERROR', 'WebSocket 连接失败:', error.message);
+      ws.close(1008, error.message);
+    }
   });
 
   // 启动服务器
   server.listen(PORT, () => {
     log('INFO', '='.repeat(60));
-    log('INFO', 'CS2 IM 服务已启动');
+    log('INFO', 'IM 多用户并发安全服务已启动');
     log('INFO', `HTTP 服务: http://localhost:${PORT}`);
     log('INFO', `WebSocket 服务: ws://localhost:${PORT}`);
     log('INFO', `健康检查: http://localhost:${PORT}/health`);
     log('INFO', `状态查询: http://localhost:${PORT}/api/status`);
     log('INFO', '='.repeat(60));
+    log('INFO', `最大会话数: ${MAX_SESSIONS}`);
+    log('INFO', `最大 WS 连接数: ${MAX_WS_CONNECTIONS}`);
+    log('INFO', `会话超时: ${SESSION_TIMEOUT / 1000 / 60} 分钟`);
+    log('INFO', '='.repeat(60));
   });
 
   // 定期心跳
   setInterval(() => {
-    if (isReady) {
-      log('DEBUG', '心跳: IM 连接正常');
-    } else {
-      log('WARN', '心跳: IM 未就绪');
-    }
+    const stats = sessionManager.getStats();
+    log('DEBUG', `心跳: ${stats.totalSessions} 个活跃会话, ${stats.wsConnections} 个 WebSocket 连接`);
 
-    // 向所有 WebSocket 客户端发送心跳
-    broadcastToClients({
+    sessionManager.broadcastToClients({
       type: 'heartbeat',
       data: {
-        isReady,
         timestamp: Date.now(),
-        clients: wsClients.size
+        stats
       }
     });
   }, 30000);
@@ -904,15 +984,14 @@ process.on('uncaughtException', (err) => {
 // 优雅退出
 process.on('SIGINT', async () => {
   log('INFO', '\n正在关闭服务...');
-  if (chat) {
-    try {
-      await chat.logout();
-      await chat.destroy();
-      log('INFO', 'IM 客户端已关闭');
-    } catch (e) {
-      log('ERROR', '关闭 IM 客户端失败:', e.message);
-    }
+
+  // 销毁所有会话
+  const sessions = Array.from(sessionManager.sessions.keys());
+  for (const userId of sessions) {
+    await sessionManager.destroySession(userId);
   }
+
+  log('INFO', '所有会话已关闭');
   process.exit(0);
 });
 
