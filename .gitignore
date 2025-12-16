@@ -1,0 +1,128 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# 依赖目录
+jspm_packages/
+
+# 构建输出
+dist/
+build/
+*.exe
+*.pkg
+
+# 环境变量和配置文件
+.env
+.env.local
+.env.*.local
+config.local.js
+
+# 敏感配置文件（包含 token 和凭证）
+state.json
+../state.json
+
+# 日志文件
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 运行时数据
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# 测试覆盖率
+coverage/
+*.lcov
+.nyc_output/
+
+# IDE 和编辑器
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# 操作系统
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# 临时文件
+*.tmp
+*.temp
+.cache/
+.temp/
+
+# 可选的 npm 缓存目录
+.npm
+
+# 可选的 eslint 缓存
+.eslintcache
+
+# 可选的 REPL 历史
+.node_repl_history
+
+# 输出的打包文件
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# parcel-bundler 缓存
+.parcel-cache
+
+# Next.js 构建输出
+.next
+out
+
+# Nuxt.js 构建输出
+.nuxt
+dist
+
+# Gatsby 文件
+.cache/
+public
+
+# vuepress 构建输出
+.vuepress/dist
+
+# Serverless 目录
+.serverless/
+
+# FuseBox 缓存
+.fusebox/
+
+# DynamoDB Local 文件
+.dynamodb/
+
+# TernJS 端口文件
+.tern-port
+
+# Stores VSCode versions used for testing VSCode extensions
+.vscode-test
+
+# yarn v2
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+ws-client-test.html
+/ws-client-test.html

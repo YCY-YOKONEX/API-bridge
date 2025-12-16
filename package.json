@@ -1,0 +1,27 @@
+{
+  "name": "cs2-im-service",
+  "version": "1.0.0",
+  "description": "Node.js IM service for CS2-DG_LAB",
+  "main": "server.js",
+  "type": "module",
+  "bin": "server.js",
+  "pkg": {
+    "targets": ["node18-win-x64"],
+    "outputPath": "dist"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "build": "pkg . --out-path dist"
+  },
+  "keywords": [
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@tencentcloud/chat": "^3.2.0",
+    "express": "^4.18.2",
+    "ws": "^8.16.0",
+    "cors": "^2.8.5"
+  }
+}

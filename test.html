@@ -1,0 +1,1129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IM 服务测试工具</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 20px;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      overflow: hidden;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      text-align: center;
+    }
+
+    .header h1 {
+      font-size: 32px;
+      margin-bottom: 10px;
+      font-weight: 700;
+    }
+
+    .header p {
+      font-size: 16px;
+      opacity: 0.9;
+    }
+
+    .tabs {
+      display: flex;
+      background: #f3f4f6;
+      border-bottom: 2px solid #e5e7eb;
+    }
+
+    .tab {
+      flex: 1;
+      padding: 20px;
+      text-align: center;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: 600;
+      color: #6b7280;
+      transition: all 0.3s;
+      border-bottom: 3px solid transparent;
+    }
+
+    .tab:hover {
+      background: #e5e7eb;
+      color: #374151;
+    }
+
+    .tab.active {
+      background: white;
+      color: #667eea;
+      border-bottom-color: #667eea;
+    }
+
+    .tab-content {
+      display: none;
+      padding: 30px;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    .section {
+      background: #f9fafb;
+      border-radius: 12px;
+      padding: 25px;
+      margin-bottom: 20px;
+      border: 1px solid #e5e7eb;
+    }
+
+    .section h2 {
+      font-size: 20px;
+      margin-bottom: 20px;
+      color: #1f2937;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .section h2::before {
+      content: '';
+      width: 4px;
+      height: 24px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 2px;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 15px;
+      margin-bottom: 15px;
+    }
+
+    .form-group {
+      margin-bottom: 15px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      color: #374151;
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    input[type="text"],
+    input[type="url"],
+    textarea {
+      width: 100%;
+      padding: 12px 16px;
+      border: 2px solid #e5e7eb;
+      border-radius: 8px;
+      font-size: 14px;
+      transition: all 0.3s;
+      font-family: inherit;
+    }
+
+    input[type="text"]:focus,
+    input[type="url"]:focus,
+    textarea:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 100px;
+      font-family: 'Courier New', monospace;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      transition: all 0.3s;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    button:disabled {
+      background: #9ca3af;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    button.secondary {
+      background: #6b7280;
+    }
+
+    button.secondary:hover {
+      box-shadow: 0 8px 20px rgba(107, 114, 128, 0.4);
+    }
+
+    button.success {
+      background: #10b981;
+    }
+
+    button.success:hover {
+      box-shadow: 0 8px 20px rgba(16, 185, 129, 0.4);
+    }
+
+    button.danger {
+      background: #ef4444;
+    }
+
+    button.danger:hover {
+      box-shadow: 0 8px 20px rgba(239, 68, 68, 0.4);
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .status-badge.connected {
+      background: #d1fae5;
+      color: #065f46;
+    }
+
+    .status-badge.disconnected {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .log-container {
+      background: #1f2937;
+      border-radius: 8px;
+      padding: 20px;
+      max-height: 400px;
+      overflow-y: auto;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .log-entry {
+      margin-bottom: 8px;
+      padding: 8px;
+      border-left: 3px solid transparent;
+      padding-left: 12px;
+      border-radius: 4px;
+    }
+
+    .log-entry.http {
+      background: rgba(59, 130, 246, 0.1);
+      border-left-color: #3b82f6;
+      color: #93c5fd;
+    }
+
+    .log-entry.ws {
+      background: rgba(16, 185, 129, 0.1);
+      border-left-color: #10b981;
+      color: #6ee7b7;
+    }
+
+    .log-entry.error {
+      background: rgba(239, 68, 68, 0.1);
+      border-left-color: #ef4444;
+      color: #fca5a5;
+    }
+
+    .log-entry.success {
+      background: rgba(34, 197, 94, 0.1);
+      border-left-color: #22c55e;
+      color: #86efac;
+    }
+
+    .log-entry .timestamp {
+      color: #9ca3af;
+      font-size: 11px;
+      margin-right: 8px;
+    }
+
+    .log-entry .tag {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      margin-right: 8px;
+    }
+
+    .log-entry.http .tag {
+      background: #3b82f6;
+      color: white;
+    }
+
+    .log-entry.ws .tag {
+      background: #10b981;
+      color: white;
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-top: 15px;
+    }
+
+    .info-item {
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      border: 1px solid #e5e7eb;
+    }
+
+    .info-item label {
+      font-size: 12px;
+      color: #6b7280;
+      margin-bottom: 5px;
+    }
+
+    .info-item .value {
+      font-size: 16px;
+      font-weight: 700;
+      color: #1f2937;
+    }
+
+    .quick-actions {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+    }
+
+    .response-preview {
+      background: #f3f4f6;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 15px;
+      margin-top: 15px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .response-preview pre {
+      margin: 0;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      color: #1f2937;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px;
+      color: #9ca3af;
+    }
+
+    .empty-state svg {
+      width: 64px;
+      height: 64px;
+      margin-bottom: 16px;
+      opacity: 0.5;
+    }
+
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #f1f1f1;
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #888;
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #555;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>IM 服务测试工具</h1>
+      <p>HTTP API 和 WebSocket 接口统一测试平台</p>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('http')">HTTP API</div>
+      <div class="tab" onclick="switchTab('websocket')">WebSocket</div>
+      <div class="tab" onclick="switchTab('logs')">日志</div>
+    </div>
+
+    <!-- HTTP API Tab -->
+    <div id="http-tab" class="tab-content active">
+      <div class="section">
+        <h2>服务器配置</h2>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="httpBaseUrl">服务器地址</label>
+            <input type="url" id="httpBaseUrl" value="http://localhost:3001" placeholder="http://localhost:3001">
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>快速测试</h2>
+        <div class="quick-actions">
+          <button onclick="httpHealthCheck()">
+            <span>🏥</span> 健康检查
+          </button>
+          <button onclick="httpGetStatus()">
+            <span>📊</span> 获取状态
+          </button>
+          <button onclick="httpSendCommand()">
+            <span>🎮</span> 发送指令
+          </button>
+          <button onclick="httpReinit()">
+            <span>🔄</span> IM 登录/重连
+          </button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>IM 登录凭证</h2>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="httpUid">UID</label>
+            <input type="text" id="httpUid" placeholder="输入 UID (例如: 5 或 game_5)">
+          </div>
+          <div class="form-group">
+            <label for="httpToken">Token</label>
+            <input type="text" id="httpToken" placeholder="输入 Token">
+          </div>
+        </div>
+        <div class="button-group">
+          <button onclick="httpLoginWithCredentials()" class="success">
+            <span>🔐</span> 使用凭证登录
+          </button>
+          <button onclick="httpReinit()" class="secondary">
+            <span>🔄</span> 使用配置文件登录
+          </button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>IM 登录状态</h2>
+        <div class="info-grid">
+          <div class="info-item">
+            <label>IM 状态</label>
+            <div class="value" id="httpImReady">-</div>
+          </div>
+          <div class="info-item">
+            <label>用户 ID</label>
+            <div class="value" id="httpImUserId">-</div>
+          </div>
+          <div class="info-item">
+            <label>UID</label>
+            <div class="value" id="httpImUid">-</div>
+          </div>
+          <div class="info-item">
+            <label>App ID</label>
+            <div class="value" id="httpAppId">-</div>
+          </div>
+        </div>
+        <div class="button-group" style="margin-top: 15px;">
+          <button onclick="httpCheckImStatus()">
+            <span>🔍</span> 检查 IM 状态
+          </button>
+          <button onclick="httpTestImLogin()">
+            <span>🧪</span> 完整登录测试
+          </button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>发送指令</h2>
+        <div class="form-group">
+          <label for="httpCommandId">指令 ID</label>
+          <input type="text" id="httpCommandId" placeholder="例如: player_hurt" value="test_command">
+        </div>
+        <button onclick="httpSendCommand()">发送指令</button>
+      </div>
+
+      <div class="section">
+        <h2>自定义请求</h2>
+        <div class="form-group">
+          <label for="httpMethod">请求方法</label>
+          <select id="httpMethod" style="width: 100%; padding: 12px 16px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: 14px;">
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="httpPath">请求路径</label>
+          <input type="text" id="httpPath" placeholder="例如: /api/status" value="/api/status">
+        </div>
+        <div class="form-group">
+          <label for="httpBody">请求体 (JSON)</label>
+          <textarea id="httpBody" placeholder='{"key": "value"}'></textarea>
+        </div>
+        <button onclick="httpCustomRequest()">发送自定义请求</button>
+      </div>
+
+      <div class="section">
+        <h2>最后响应</h2>
+        <div id="httpResponse" class="response-preview">
+          <div class="empty-state">
+            <p>暂无响应数据</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- WebSocket Tab -->
+    <div id="websocket-tab" class="tab-content">
+      <div class="section">
+        <h2>连接管理</h2>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="wsUrl">WebSocket 地址</label>
+            <input type="url" id="wsUrl" value="ws://localhost:3001" placeholder="ws://localhost:3001">
+          </div>
+          <div class="form-group">
+            <label>连接状态</label>
+            <div>
+              <span id="wsStatus" class="status-badge disconnected">未连接</span>
+            </div>
+          </div>
+        </div>
+        <div class="button-group">
+          <button id="wsConnectBtn" onclick="wsConnect()" class="success">连接</button>
+          <button id="wsDisconnectBtn" onclick="wsDisconnect()" class="danger" disabled>断开</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>IM 登录凭证</h2>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="wsUidInput">UID</label>
+            <input type="text" id="wsUidInput" placeholder="输入 UID (例如: 5 或 game_5)">
+          </div>
+          <div class="form-group">
+            <label for="wsTokenInput">Token</label>
+            <input type="text" id="wsTokenInput" placeholder="输入 Token">
+          </div>
+        </div>
+        <div class="button-group">
+          <button onclick="wsLoginWithCredentials()" class="success">
+            <span>🔐</span> 使用凭证登录
+          </button>
+          <button onclick="wsSendReinit()" class="secondary">
+            <span>🔄</span> 使用配置文件登录
+          </button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>服务器信息</h2>
+        <div class="info-grid">
+          <div class="info-item">
+            <label>IM 状态</label>
+            <div class="value" id="wsImStatus">-</div>
+          </div>
+          <div class="info-item">
+            <label>用户 ID</label>
+            <div class="value" id="wsUserId">-</div>
+          </div>
+          <div class="info-item">
+            <label>UID</label>
+            <div class="value" id="wsUid">-</div>
+          </div>
+          <div class="info-item">
+            <label>消息计数</label>
+            <div class="value" id="wsMsgCount">0</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>快速操作</h2>
+        <div class="quick-actions">
+          <button onclick="wsSendPing()">
+            <span>🏓</span> Ping
+          </button>
+          <button onclick="wsSendGetStatus()">
+            <span>📊</span> 获取状态
+          </button>
+          <button onclick="wsSendCommand()">
+            <span>🎮</span> 发送指令
+          </button>
+          <button onclick="wsSendReinit()">
+            <span>🔄</span> IM 登录/重连
+          </button>
+        </div>
+        <div class="button-group" style="margin-top: 15px;">
+          <button onclick="wsTestImLogin()" class="success">
+            <span>🔐</span> 测试 IM 登录
+          </button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>发送指令</h2>
+        <div class="form-group">
+          <label for="wsCommandId">指令 ID</label>
+          <input type="text" id="wsCommandId" placeholder="例如: player_hurt" value="test_command">
+        </div>
+        <button onclick="wsSendCommand()">发送指令</button>
+      </div>
+
+      <div class="section">
+        <h2>自定义消息</h2>
+        <div class="form-group">
+          <label for="wsCustomMessage">JSON 消息</label>
+          <textarea id="wsCustomMessage" placeholder='{"type": "ping"}'>{"type": "ping"}</textarea>
+        </div>
+        <button onclick="wsSendCustom()">发送自定义消息</button>
+      </div>
+    </div>
+
+    <!-- Logs Tab -->
+    <div id="logs-tab" class="tab-content">
+      <div class="section">
+        <h2>操作日志</h2>
+        <div class="button-group" style="margin-bottom: 15px;">
+          <button onclick="clearLogs()" class="secondary">清空日志</button>
+          <button onclick="exportLogs()" class="secondary">导出日志</button>
+        </div>
+        <div id="logContainer" class="log-container">
+          <div class="empty-state">
+            <p>暂无日志</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 全局变量
+    let ws = null;
+    let wsMessageCount = 0;
+    const logs = [];
+
+    // Tab 切换
+    function switchTab(tabName) {
+      document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+      event.target.classList.add('active');
+      document.getElementById(`${tabName}-tab`).classList.add('active');
+    }
+
+    // 日志函数
+    function log(message, type = 'http') {
+      const timestamp = new Date().toLocaleTimeString();
+      const entry = {
+        timestamp,
+        message,
+        type,
+        time: Date.now()
+      };
+      logs.push(entry);
+
+      const logContainer = document.getElementById('logContainer');
+      if (logContainer.querySelector('.empty-state')) {
+        logContainer.innerHTML = '';
+      }
+
+      const logEntry = document.createElement('div');
+      logEntry.className = `log-entry ${type}`;
+      logEntry.innerHTML = `
+        <span class="timestamp">[${timestamp}]</span>
+        <span class="tag">${type.toUpperCase()}</span>
+        ${message}
+      `;
+      logContainer.appendChild(logEntry);
+      logContainer.scrollTop = logContainer.scrollHeight;
+    }
+
+    function clearLogs() {
+      logs.length = 0;
+      document.getElementById('logContainer').innerHTML = '<div class="empty-state"><p>暂无日志</p></div>';
+    }
+
+    function exportLogs() {
+      const text = logs.map(l => `[${l.timestamp}] [${l.type.toUpperCase()}] ${l.message}`).join('\n');
+      const blob = new Blob([text], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `im-service-logs-${Date.now()}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // HTTP API 函数
+    async function httpRequest(method, path, body = null) {
+      const baseUrl = document.getElementById('httpBaseUrl').value;
+      const url = `${baseUrl}${path}`;
+
+      log(`${method} ${url}`, 'http');
+
+      try {
+        const options = {
+          method,
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        };
+
+        if (body) {
+          options.body = JSON.stringify(body);
+          log(`请求体: ${JSON.stringify(body, null, 2)}`, 'http');
+        }
+
+        const response = await fetch(url, options);
+        const data = await response.json();
+
+        log(`响应 ${response.status}: ${JSON.stringify(data, null, 2)}`, response.ok ? 'success' : 'error');
+
+        document.getElementById('httpResponse').innerHTML = `
+          <pre>${JSON.stringify(data, null, 2)}</pre>
+        `;
+
+        return data;
+      } catch (error) {
+        log(`错误: ${error.message}`, 'error');
+        document.getElementById('httpResponse').innerHTML = `
+          <pre style="color: #ef4444;">${error.message}</pre>
+        `;
+        throw error;
+      }
+    }
+
+    async function httpHealthCheck() {
+      const data = await httpRequest('GET', '/health');
+      if (data) {
+        updateHttpImStatus(data);
+      }
+    }
+
+    async function httpGetStatus() {
+      const data = await httpRequest('GET', '/api/status');
+      if (data) {
+        updateHttpImStatus(data);
+      }
+    }
+
+    function updateHttpImStatus(data) {
+      if (data.imReady !== undefined) {
+        document.getElementById('httpImReady').textContent = data.imReady ? '✅ 已就绪' : '❌ 未就绪';
+        document.getElementById('httpImReady').style.color = data.imReady ? '#10b981' : '#ef4444';
+      }
+      if (data.isReady !== undefined) {
+        document.getElementById('httpImReady').textContent = data.isReady ? '✅ 已就绪' : '❌ 未就绪';
+        document.getElementById('httpImReady').style.color = data.isReady ? '#10b981' : '#ef4444';
+      }
+      if (data.userId) {
+        document.getElementById('httpImUserId').textContent = data.userId;
+      }
+      if (data.uid) {
+        document.getElementById('httpImUid').textContent = data.uid;
+      }
+      if (data.config) {
+        if (data.config.userId) {
+          document.getElementById('httpImUserId').textContent = data.config.userId;
+        }
+        if (data.config.uid) {
+          document.getElementById('httpImUid').textContent = data.config.uid;
+        }
+        if (data.config.appId) {
+          document.getElementById('httpAppId').textContent = data.config.appId;
+        }
+      }
+    }
+
+    async function httpLoginWithCredentials() {
+      const uid = document.getElementById('httpUid').value.trim();
+      const token = document.getElementById('httpToken').value.trim();
+
+      if (!uid || !token) {
+        log('❌ 请输入 UID 和 Token', 'error');
+        alert('请输入 UID 和 Token');
+        return;
+      }
+
+      log(`开始使用自定义凭证登录: UID=${uid}`, 'http');
+
+      try {
+        const data = await httpRequest('POST', '/api/login', { uid, token });
+
+        if (data && data.success) {
+          log('✅ IM 登录成功！', 'success');
+          log(`登录用户: ${data.data.userId} (${data.data.uid})`, 'success');
+          log(`App ID: ${data.data.appId}`, 'success');
+
+          // 更新状态显示
+          setTimeout(() => {
+            httpCheckImStatus();
+          }, 1000);
+        }
+      } catch (error) {
+        log(`❌ 登录失败: ${error.message}`, 'error');
+      }
+    }
+
+    function httpSendCommand() {
+      const commandId = document.getElementById('httpCommandId').value;
+      if (!commandId) {
+        log('请输入指令 ID', 'error');
+        return;
+      }
+      httpRequest('POST', '/api/send-command', { commandId });
+    }
+
+    async function httpReinit() {
+      if (confirm('确定要重新初始化/登录 IM 吗？这将重新连接到腾讯云 IM 服务器。')) {
+        log('开始 IM 登录流程...', 'http');
+        const data = await httpRequest('POST', '/api/reinit');
+        if (data && data.success) {
+          log('IM 登录成功！', 'success');
+          // 等待一秒后自动刷新状态
+          setTimeout(() => {
+            httpCheckImStatus();
+          }, 1000);
+        }
+      }
+    }
+
+    async function httpCheckImStatus() {
+      log('正在检查 IM 状态...', 'http');
+      const data = await httpRequest('GET', '/api/status');
+      if (data) {
+        if (data.isReady) {
+          log('✅ IM 已登录并就绪', 'success');
+        } else {
+          log('❌ IM 未就绪，可能需要重新登录', 'error');
+        }
+      }
+    }
+
+    async function httpTestImLogin() {
+      log('开始完整的 IM 登录测试...', 'http');
+
+      // 步骤 1: 检查当前状态
+      log('步骤 1/3: 检查当前 IM 状态', 'http');
+      let statusData = await httpRequest('GET', '/api/status');
+
+      if (!statusData) {
+        log('❌ 无法获取状态，测试终止', 'error');
+        return;
+      }
+
+      if (statusData.isReady) {
+        log('✅ IM 已经处于就绪状态', 'success');
+        const proceed = confirm('IM 已经登录。是否要重新登录测试？');
+        if (!proceed) {
+          log('测试取消', 'http');
+          return;
+        }
+      } else {
+        log('⚠️ IM 当前未就绪，需要登录', 'http');
+      }
+
+      // 步骤 2: 执行登录
+      log('步骤 2/3: 执行 IM 登录', 'http');
+      const reinitData = await httpRequest('POST', '/api/reinit');
+
+      if (!reinitData || !reinitData.success) {
+        log('❌ IM 登录失败', 'error');
+        return;
+      }
+
+      log('✅ IM 登录请求成功', 'success');
+
+      // 步骤 3: 等待并验证登录状态
+      log('步骤 3/3: 等待 IM SDK 就绪...', 'http');
+
+      // 轮询检查状态，最多等待 10 秒
+      let attempts = 0;
+      const maxAttempts = 10;
+      const checkInterval = setInterval(async () => {
+        attempts++;
+        const checkData = await httpRequest('GET', '/api/status');
+
+        if (checkData && checkData.isReady) {
+          clearInterval(checkInterval);
+          log('✅ IM 登录测试完成！SDK 已就绪', 'success');
+          log(`登录用户: ${checkData.config.userId} (${checkData.config.uid})`, 'success');
+          log(`App ID: ${checkData.config.appId}`, 'success');
+        } else if (attempts >= maxAttempts) {
+          clearInterval(checkInterval);
+          log('⚠️ 等待超时，IM 可能仍在初始化中', 'error');
+        } else {
+          log(`等待中... (${attempts}/${maxAttempts})`, 'http');
+        }
+      }, 1000);
+    }
+
+    function httpCustomRequest() {
+      const method = document.getElementById('httpMethod').value;
+      const path = document.getElementById('httpPath').value;
+      const bodyText = document.getElementById('httpBody').value;
+
+      let body = null;
+      if (bodyText.trim()) {
+        try {
+          body = JSON.parse(bodyText);
+        } catch (e) {
+          log('JSON 解析失败: ' + e.message, 'error');
+          return;
+        }
+      }
+
+      httpRequest(method, path, body);
+    }
+
+    // WebSocket 函数
+    function wsConnect() {
+      const url = document.getElementById('wsUrl').value;
+      log(`正在连接到 ${url}`, 'ws');
+
+      try {
+        ws = new WebSocket(url);
+
+        ws.onopen = () => {
+          log('WebSocket 连接成功', 'success');
+          updateWsStatus(true);
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            log(`收到消息: ${JSON.stringify(data, null, 2)}`, 'ws');
+            handleWsMessage(data);
+          } catch (e) {
+            log(`收到非 JSON 消息: ${event.data}`, 'ws');
+          }
+        };
+
+        ws.onerror = (error) => {
+          log('WebSocket 错误', 'error');
+        };
+
+        ws.onclose = (event) => {
+          log(`WebSocket 连接关闭 (代码: ${event.code})`, 'ws');
+          updateWsStatus(false);
+        };
+      } catch (e) {
+        log(`连接失败: ${e.message}`, 'error');
+      }
+    }
+
+    function wsDisconnect() {
+      if (ws) {
+        ws.close();
+        log('主动断开连接', 'ws');
+      }
+    }
+
+    function updateWsStatus(connected) {
+      const statusBadge = document.getElementById('wsStatus');
+      const connectBtn = document.getElementById('wsConnectBtn');
+      const disconnectBtn = document.getElementById('wsDisconnectBtn');
+
+      if (connected) {
+        statusBadge.textContent = '已连接';
+        statusBadge.className = 'status-badge connected';
+        connectBtn.disabled = true;
+        disconnectBtn.disabled = false;
+      } else {
+        statusBadge.textContent = '未连接';
+        statusBadge.className = 'status-badge disconnected';
+        connectBtn.disabled = false;
+        disconnectBtn.disabled = true;
+        document.getElementById('wsImStatus').textContent = '-';
+        document.getElementById('wsUserId').textContent = '-';
+        document.getElementById('wsUid').textContent = '-';
+      }
+    }
+
+    function handleWsMessage(data) {
+      wsMessageCount++;
+      document.getElementById('wsMsgCount').textContent = wsMessageCount;
+
+      switch (data.type) {
+        case 'connected':
+          if (data.data) {
+            document.getElementById('wsImStatus').textContent = data.data.isReady ? '✅ 就绪' : '❌ 未就绪';
+            document.getElementById('wsUserId').textContent = data.data.userId || '-';
+            document.getElementById('wsUid').textContent = data.data.uid || '-';
+          }
+          break;
+        case 'status':
+          if (data.data && data.data.isReady !== undefined) {
+            document.getElementById('wsImStatus').textContent = data.data.isReady ? '✅ 就绪' : '❌ 未就绪';
+          }
+          if (data.data && data.data.config) {
+            if (data.data.config.userId) {
+              document.getElementById('wsUserId').textContent = data.data.config.userId;
+            }
+            if (data.data.config.uid) {
+              document.getElementById('wsUid').textContent = data.data.config.uid;
+            }
+          }
+          break;
+        case 'loginResult':
+          if (data.success) {
+            log('✅ WebSocket IM 登录成功', 'success');
+            if (data.data) {
+              document.getElementById('wsImStatus').textContent = '✅ 就绪';
+              document.getElementById('wsUserId').textContent = data.data.userId || '-';
+              document.getElementById('wsUid').textContent = data.data.uid || '-';
+            }
+          } else {
+            log(`❌ WebSocket IM 登录失败: ${data.message}`, 'error');
+          }
+          break;
+      }
+    }
+
+    function wsLoginWithCredentials() {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        log('❌ WebSocket 未连接，请先连接 WebSocket', 'error');
+        alert('请先连接 WebSocket');
+        return;
+      }
+
+      const uid = document.getElementById('wsUidInput').value.trim();
+      const token = document.getElementById('wsTokenInput').value.trim();
+
+      if (!uid || !token) {
+        log('❌ 请输入 UID 和 Token', 'error');
+        alert('请输入 UID 和 Token');
+        return;
+      }
+
+      log(`通过 WebSocket 使用自定义凭证登录: UID=${uid}`, 'ws');
+      wsSend({ type: 'login', uid, token });
+    }
+
+    function wsSend(data) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        log('WebSocket 未连接', 'error');
+        return;
+      }
+
+      const message = JSON.stringify(data);
+      ws.send(message);
+      log(`发送: ${message}`, 'ws');
+    }
+
+    function wsSendPing() {
+      wsSend({ type: 'ping' });
+    }
+
+    function wsSendGetStatus() {
+      wsSend({ type: 'getStatus' });
+    }
+
+    function wsSendCommand() {
+      const commandId = document.getElementById('wsCommandId').value;
+      if (!commandId) {
+        log('请输入指令 ID', 'error');
+        return;
+      }
+      wsSend({ type: 'sendCommand', commandId });
+    }
+
+    function wsSendReinit() {
+      if (confirm('确定要重新初始化/登录 IM 吗？这将重新连接到腾讯云 IM 服务器。')) {
+        log('通过 WebSocket 发送 IM 登录请求...', 'ws');
+        wsSend({ type: 'reinit' });
+      }
+    }
+
+    function wsSendCustom() {
+      const text = document.getElementById('wsCustomMessage').value;
+      try {
+        const data = JSON.parse(text);
+        wsSend(data);
+      } catch (e) {
+        log('JSON 解析失败: ' + e.message, 'error');
+      }
+    }
+
+    function wsTestImLogin() {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        log('❌ WebSocket 未连接，请先连接 WebSocket', 'error');
+        return;
+      }
+
+      log('开始通过 WebSocket 测试 IM 登录...', 'ws');
+
+      // 步骤 1: 检查当前状态
+      log('步骤 1/3: 检查当前 IM 状态', 'ws');
+      wsSend({ type: 'getStatus' });
+
+      // 等待 1 秒后执行登录
+      setTimeout(() => {
+        log('步骤 2/3: 执行 IM 登录', 'ws');
+        wsSend({ type: 'reinit' });
+
+        // 等待 2 秒后再次检查状态
+        setTimeout(() => {
+          log('步骤 3/3: 验证登录状态', 'ws');
+          wsSend({ type: 'getStatus' });
+
+          log('✅ IM 登录测试流程完成，请查看服务器推送的状态消息', 'success');
+        }, 2000);
+      }, 1000);
+    }
+
+    // 页面加载完成
+    log('测试工具已就绪', 'success');
+    log('提示: 可以使用 HTTP API 或 WebSocket 测试 IM 登录功能', 'success');
+  </script>
+</body>
+</html>
