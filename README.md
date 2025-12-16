@@ -1,4 +1,4 @@
-# CS2 IM Service
+# IM Service
 
 Node.js IM 服务，负责连接腾讯云 IM 并发送游戏指令。
 
