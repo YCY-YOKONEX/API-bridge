@@ -6,6 +6,21 @@ import { dirname } from 'path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
 import AsyncLock from 'async-lock';
+import jwt from 'jsonwebtoken';
+import {
+  initDatabase,
+  verifyAdmin,
+  resetAdminPassword,
+  logConnection,
+  logCommand,
+  getConnectionLogs,
+  getCommandLogs,
+  getLogStats,
+  getRealtimeStats,
+  getTrafficTrend,
+  getSystemMetrics,
+  closeDatabase
+} from './database.js';
 
 // 为腾讯云 SDK 提供 WebSocket polyfill (Node.js 环境需要)
 if (typeof global.WebSocket === 'undefined') {
@@ -31,13 +46,45 @@ const MAX_WS_CONNECTIONS = 200;       // 最大 WebSocket 连接数
 const SESSION_TIMEOUT = 240 * 60 * 1000; // 会话超时时间
 const SESSION_CLEANUP_INTERVAL = 5 * 60 * 1000; // 清理检查间隔 (5分钟)
 
+const JWT_SECRET = process.env.JWT_SECRET || 'f9e2a1b8c7d4e6f3a0c5d2e9b8f1a3c7';
+const JWT_EXPIRES_IN = '24h';
+
 // 全局锁管理器
 const lock = new AsyncLock({ timeout: 10000 });
+
+// 初始化数据库
+initDatabase();
 
 // 日志函数
 function log(level, ...args) {
   const timestamp = new Date().toISOString();
   console.log(`[${timestamp}] [${level}]`, ...args);
+}
+
+/**
+ * JWT 认证中间件
+ */
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({
+      success: false,
+      message: '未提供认证令牌'
+    });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({
+        success: false,
+        message: '令牌无效或已过期'
+      });
+    }
+    req.user = user;
+    next();
+  });
 }
 
 /**
@@ -244,7 +291,7 @@ class IMSession {
       });
 
       const message = this.chat.createTextMessage({
-        to: this.userId,
+        to: this.uid,
         conversationType: TencentCloudChat.TYPES.CONV_C2C,
         payload: {
           text: messageText
@@ -559,6 +606,276 @@ function processUid(rawUid) {
 // ============================================================================
 
 /**
+ * 管理员登录
+ */
+app.post('/api/admin/login', (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({
+        success: false,
+        message: '用户名和密码不能为空'
+      });
+    }
+
+    // 使用数据库验证
+    const verifyResult = verifyAdmin(username, password);
+
+    if (verifyResult.success) {
+      const token = jwt.sign(
+        { username, role: 'admin' },
+        JWT_SECRET,
+        { expiresIn: JWT_EXPIRES_IN }
+      );
+
+      log('INFO', `管理员登录成功: ${username}`);
+      res.json({
+        success: true,
+        message: '登录成功',
+        data: {
+          token,
+          username,
+          expiresIn: JWT_EXPIRES_IN
+        }
+      });
+    } else {
+      log('WARN', `管理员登录失败: ${username} - ${verifyResult.message}`);
+      res.status(401).json({
+        success: false,
+        message: verifyResult.message
+      });
+    }
+  } catch (error) {
+    log('ERROR', '管理员登录错误:', error.message);
+    res.status(500).json({
+      success: false,
+      message: '登录失败'
+    });
+  }
+});
+
+/**
+ * 获取所有会话（需要认证）
+ */
+app.get('/api/admin/sessions', authenticateToken, (req, res) => {
+  try {
+    const stats = sessionManager.getStats();
+    res.json({
+      success: true,
+      data: stats
+    });
+  } catch (error) {
+    log('ERROR', '获取会话列表失败:', error.message);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+/**
+ * 重置管理员密码（需要认证）
+ */
+app.post('/api/admin/reset-password', authenticateToken, (req, res) => {
+  try {
+    const { oldPassword, newPassword } = req.body;
+    const username = req.user.username;
+
+    if (!oldPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: '原密码和新密码不能为空'
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: '新密码长度不能少于6位'
+      });
+    }
+
+    const result = resetAdminPassword(username, oldPassword, newPassword);
+
+    if (result.success) {
+      log('INFO', `管理员密码重置成功: ${username}`);
+      res.json(result);
+    } else {
+      log('WARN', `管理员密码重置失败: ${username} - ${result.message}`);
+      res.status(400).json(result);
+    }
+  } catch (error) {
+    log('ERROR', '密码重置错误:', error.message);
+    res.status(500).json({
+      success: false,
+      message: '密码重置失败'
+    });
+  }
+});
+
+/**
+ * 获取连接日志（需要认证）
+ */
+app.get('/api/admin/logs/connections', authenticateToken, (req, res) => {
+  try {
+    const {
+      userId,
+      action,
+      status,
+      startTime,
+      endTime,
+      limit = 100,
+      offset = 0
+    } = req.query;
+
+    const result = getConnectionLogs({
+      userId,
+      action,
+      status,
+      startTime: startTime ? parseInt(startTime) : null,
+      endTime: endTime ? parseInt(endTime) : null,
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(500).json(result);
+    }
+  } catch (error) {
+    log('ERROR', '获取连接日志失败:', error.message);
+    res.status(500).json({
+      success: false,
+      message: '获取日志失败'
+    });
+  }
+});
+
+/**
+ * 获取指令日志（需要认证）
+ */
+app.get('/api/admin/logs/commands', authenticateToken, (req, res) => {
+  try {
+    const {
+      userId,
+      status,
+      startTime,
+      endTime,
+      limit = 100,
+      offset = 0
+    } = req.query;
+
+    const result = getCommandLogs({
+      userId,
+      status,
+      startTime: startTime ? parseInt(startTime) : null,
+      endTime: endTime ? parseInt(endTime) : null,
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(500).json(result);
+    }
+  } catch (error) {
+    log('ERROR', '获取指令日志失败:', error.message);
+    res.status(500).json({
+      success: false,
+      message: '获取日志失败'
+    });
+  }
+});
+
+/**
+ * 获取日志统计（需要认证）
+ */
+app.get('/api/admin/logs/stats', authenticateToken, (req, res) => {
+  try {
+    const result = getLogStats();
+
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(500).json(result);
+    }
+  } catch (error) {
+    log('ERROR', '获取日志统计失败:', error.message);
+    res.status(500).json({
+      success: false,
+      message: '获取统计失败'
+    });
+  }
+});
+
+/**
+ * 获取实时统计数据（需要认证）
+ */
+app.get('/api/admin/stats/realtime', authenticateToken, (req, res) => {
+  try {
+    const result = getRealtimeStats();
+
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(500).json(result);
+    }
+  } catch (error) {
+    log('ERROR', '获取实时统计失败:', error.message);
+    res.status(500).json({
+      success: false,
+      message: '获取实时统计失败'
+    });
+  }
+});
+
+/**
+ * 获取流量趋势数据（需要认证）
+ */
+app.get('/api/admin/stats/traffic-trend', authenticateToken, (req, res) => {
+  try {
+    const range = req.query.range || 'day';
+    const result = getTrafficTrend(range);
+
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(500).json(result);
+    }
+  } catch (error) {
+    log('ERROR', '获取流量趋势失败:', error.message);
+    res.status(500).json({
+      success: false,
+      message: '获取流量趋势失败'
+    });
+  }
+});
+
+/**
+ * 获取系统指标（需要认证）
+ */
+app.get('/api/admin/stats/system-metrics', authenticateToken, async (req, res) => {
+  try {
+    const result = await getSystemMetrics();
+
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(500).json(result);
+    }
+  } catch (error) {
+    log('ERROR', '获取系统指标失败:', error.message);
+    res.status(500).json({
+      success: false,
+      message: '获取系统指标失败'
+    });
+  }
+});
+
+/**
  * 健康检查
  */
 app.get('/health', (req, res) => {
@@ -619,11 +936,24 @@ app.post('/api/send-command', async (req, res) => {
       });
     }
 
-    // 发送消息
+    // 发送消息并记录响应时间
+    const startTime = Date.now();
     const result = await session.sendMessage(commandId);
+    const responseTime = Date.now() - startTime;
+
+    // 记录指令日志（包含响应时间）
+    logCommand(userId, commandId, 'success', '指令发送成功', responseTime);
+
     res.json(result);
   } catch (error) {
     log('ERROR', 'API 错误:', error.message);
+
+    // 记录失败日志（响应时间为null表示失败）
+    const { userId, commandId } = req.body;
+    if (userId && commandId) {
+      logCommand(userId, commandId, 'failed', error.message, null);
+    }
+
     res.status(500).json({
       success: false,
       message: error.message
@@ -646,10 +976,14 @@ app.post('/api/login', async (req, res) => {
     }
 
     const { userId, uid } = processUid(rawUid);
+    const clientIp = req.ip || req.connection.remoteAddress;
     log('INFO', `收到登录请求: UID=${uid}, UserID=${userId}`);
 
     // 获取或创建会话
     const session = await sessionManager.getOrCreateSession(userId, uid, token);
+
+    // 记录连接日志
+    logConnection(userId, uid, 'login', 'success', 'IM 登录成功', clientIp);
 
     res.json({
       success: true,
@@ -663,6 +997,15 @@ app.post('/api/login', async (req, res) => {
     });
   } catch (error) {
     log('ERROR', '✗ IM 登录失败:', error.message);
+
+    // 记录失败日志
+    const { uid: rawUid } = req.body;
+    if (rawUid) {
+      const { userId, uid } = processUid(rawUid);
+      const clientIp = req.ip || req.connection.remoteAddress;
+      logConnection(userId, uid, 'login', 'failed', error.message, clientIp);
+    }
+
     res.status(500).json({
       success: false,
       message: error.message
@@ -684,14 +1027,24 @@ app.post('/api/logout', async (req, res) => {
       });
     }
 
+    const session = sessionManager.getSession(userId);
+    const uid = session ? session.uid : userId;
+    const clientIp = req.ip || req.connection.remoteAddress;
+
     const destroyed = await sessionManager.destroySession(userId);
 
     if (destroyed) {
+      // 记录登出日志
+      logConnection(userId, uid, 'logout', 'success', '登出成功', clientIp);
+
       res.json({
         success: true,
         message: '登出成功'
       });
     } else {
+      // 记录失败日志
+      logConnection(userId, uid, 'logout', 'failed', '会话不存在', clientIp);
+
       res.status(404).json({
         success: false,
         message: '会话不存在'
@@ -699,6 +1052,14 @@ app.post('/api/logout', async (req, res) => {
     }
   } catch (error) {
     log('ERROR', '登出失败:', error.message);
+
+    // 记录失败日志
+    const { userId } = req.body;
+    if (userId) {
+      const clientIp = req.ip || req.connection.remoteAddress;
+      logConnection(userId, userId, 'logout', 'failed', error.message, clientIp);
+    }
+
     res.status(500).json({
       success: false,
       message: error.message
@@ -773,6 +1134,11 @@ async function handleWebSocketMessage(ws, message) {
           log('INFO', `WebSocket 收到登录请求: UID=${uid}, UserID=${userId}`);
 
           const session = await sessionManager.getOrCreateSession(userId, uid, data.token);
+          
+          // 非管理后台连接才记录日志
+          if (!ws.isAdmin) {
+            logConnection(userId, uid, 'login', 'success', 'WebSocket IM 登录成功', session.userId);
+          }
 
           ws.send(JSON.stringify({
             type: 'loginResult',
@@ -786,6 +1152,16 @@ async function handleWebSocketMessage(ws, message) {
             }
           }));
         } catch (error) {
+          // 非管理后台连接才记录失败日志
+          if (!ws.isAdmin && data.uid) {
+            try {
+              const { userId, uid } = processUid(data.uid);
+              logConnection(userId, uid, 'login', 'failed', `WebSocket登录失败: ${error.message}`, userId);
+            } catch (e) {
+              // 如果uid解析失败，记录通用日志
+              logConnection('unknown', 'unknown', 'login', 'failed', `WebSocket登录失败-UID解析错误: ${error.message}`, "");
+            }
+          }
           ws.send(JSON.stringify({
             type: 'loginResult',
             success: false,
@@ -810,6 +1186,7 @@ async function handleWebSocketMessage(ws, message) {
             success: destroyed,
             message: destroyed ? '登出成功' : '会话不存在'
           }));
+          logConnection(data.userId, "game_"+data.userId, 'logout', 'success', 'WebSocket IM 登出成功', data.userId);
         } catch (error) {
           ws.send(JSON.stringify({
             type: 'logoutResult',
@@ -854,18 +1231,27 @@ async function handleWebSocketMessage(ws, message) {
             return;
           }
 
+          const startTime = Date.now();
           const result = await session.sendMessage(data.commandId);
+          const responseTime = Date.now() - startTime;
+          
           ws.send(JSON.stringify({
             type: 'commandResult',
             success: true,
             data: result
           }));
+          
+          // 记录指令日志（包含响应时间）
+          logCommand(data.userId, data.commandId, 'success', '指令发送成功', responseTime);
         } catch (error) {
           ws.send(JSON.stringify({
             type: 'commandResult',
             success: false,
             message: error.message
           }));
+          
+          // 记录失败日志
+          logCommand(data.userId, data.commandId, 'failed', error.message, null);
         }
         break;
 
@@ -901,10 +1287,16 @@ async function startServer() {
   // WebSocket 连接处理
   wss.on('connection', (ws, req) => {
     const clientIp = req.socket.remoteAddress;
+    const url = new URL(req.url, 'http://localhost');
+    const isAdmin = url.searchParams.get('admin') === 'true';
+    
+    // 将isAdmin存储到ws对象，供消息处理使用
+    ws.isAdmin = isAdmin;
 
     try {
       sessionManager.addWebSocketClient(ws);
-      log('INFO', `WebSocket 客户端连接: ${clientIp}`);
+      log('INFO', `WebSocket 客户端连接: ${clientIp}${isAdmin ? ' (管理后台)' : ''}`);
+
 
       // 发送欢迎消息
       ws.send(JSON.stringify({
@@ -927,8 +1319,13 @@ async function startServer() {
 
       // 断开连接
       ws.on('close', () => {
-        log('INFO', `WebSocket 客户端断开: ${clientIp}`);
+        log('INFO', `WebSocket 客户端断开: ${clientIp}${ws.isAdmin ? ' (管理后台)' : ''}`);
         sessionManager.removeWebSocketClient(ws);
+        
+        // 非管理后台连接才记录日志
+        if (!ws.isAdmin) {
+          logConnection(clientIp, 'N/A', 'ws_disconnect', 'success', 'WebSocket连接断开', clientIp);
+        }
       });
     } catch (error) {
       log('ERROR', 'WebSocket 连接失败:', error.message);
@@ -990,6 +1387,9 @@ process.on('SIGINT', async () => {
   for (const userId of sessions) {
     await sessionManager.destroySession(userId);
   }
+
+  // 关闭数据库连接
+  closeDatabase();
 
   log('INFO', '所有会话已关闭');
   process.exit(0);

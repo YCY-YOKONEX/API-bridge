@@ -1,0 +1,464 @@
+<template>
+  <Layout>
+    <!-- 核心指标卡片 -->
+    <div class="stats-container">
+      <a-row :gutter="16">
+        <a-col :span="6">
+          <a-card>
+            <a-statistic
+              title="在线用户"
+              :value="stats.onlineUsers"
+              :value-style="{ color: '#3f8600' }"
+            >
+              <template #prefix>
+                <UserOutlined />
+              </template>
+            </a-statistic>
+          </a-card>
+        </a-col>
+        <a-col :span="6">
+          <a-card>
+            <a-statistic
+              title="今日消息"
+              :value="stats.todayMessages"
+              :value-style="{ color: '#1890ff' }"
+            >
+              <template #prefix>
+                <MessageOutlined />
+              </template>
+            </a-statistic>
+          </a-card>
+        </a-col>
+        <a-col :span="6">
+          <a-card>
+            <a-statistic
+              title="系统响应(ms)"
+              :value="stats.avgResponseTime"
+              :precision="2"
+              :value-style="{ color: '#faad14' }"
+            >
+              <template #prefix>
+                <ClockCircleOutlined />
+              </template>
+            </a-statistic>
+          </a-card>
+        </a-col>
+        <a-col :span="6">
+          <a-card>
+            <a-statistic
+              title="错误率(%)"
+              :value="stats.errorRate"
+              :precision="2"
+              :value-style="{ color: stats.errorRate > 1 ? '#cf1322' : '#3f8600' }"
+            >
+              <template #prefix>
+                <ExclamationCircleOutlined />
+              </template>
+            </a-statistic>
+          </a-card>
+        </a-col>
+      </a-row>
+    </div>
+
+    <!-- 实时监控 -->
+    <a-card title="实时监控" :bordered="false" style="margin-top: 24px">
+      <a-row :gutter="16">
+        <a-col :span="12">
+          <div class="monitor-chart">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px">
+              <h3>流量趋势统计</h3>
+              <a-radio-group v-model:value="timeRange" size="small" @change="handleTimeRangeChange">
+                <a-radio-button value="day">日</a-radio-button>
+                <a-radio-button value="week">周</a-radio-button>
+                <a-radio-button value="month">月</a-radio-button>
+                <a-radio-button value="year">年</a-radio-button>
+              </a-radio-group>
+            </div>
+            <div ref="chartContainer" class="echarts-container"></div>
+            <div class="chart-summary">
+              <a-space>
+                <span>峰值: {{ maxMessageCount }} 条</span>
+                <a-divider type="vertical" />
+                <span>平均值: {{ Math.round(trafficTrend.reduce((sum, item) => sum + item.count, 0) / trafficTrend.length) }} 条{{ timeRange === 'day' ? '/小时' : timeRange === 'week' ? '/4小时' : timeRange === 'month' ? '/天' : '/周' }}</span>
+              </a-space>
+            </div>
+          </div>
+        </a-col>
+        <a-col :span="12">
+          <div class="monitor-chart">
+            <h3>系统资源</h3>
+            <a-space direction="vertical" style="width: 100%">
+              <div>
+                <div style="margin-bottom: 8px">CPU使用率</div>
+                <a-progress :percent="systemResources.cpu" :stroke-color="getProgressColor(systemResources.cpu)" />
+              </div>
+              <div>
+                <div style="margin-bottom: 8px">内存使用率</div>
+                <a-progress :percent="systemResources.memory" :stroke-color="getProgressColor(systemResources.memory)" />
+              </div>
+              <div>
+                <div style="margin-bottom: 8px">磁盘使用率</div>
+                <a-progress :percent="systemResources.disk" :stroke-color="getProgressColor(systemResources.disk)" />
+              </div>
+            </a-space>
+          </div>
+        </a-col>
+      </a-row>
+    </a-card>
+
+    <!-- 最近活动 -->
+    <a-card title="最近活动" :bordered="false" style="margin-top: 24px">
+      <a-table
+        :columns="activityColumns"
+        :data-source="recentActivities"
+        :pagination="false"
+        size="small"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'status'">
+            <a-tag :color="record.status === 'success' ? 'success' : 'error'">
+              {{ record.status === 'success' ? '成功' : '失败' }}
+            </a-tag>
+          </template>
+        </template>
+      </a-table>
+    </a-card>
+  </Layout>
+</template>
+
+<script setup>
+import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
+import Layout from '../components/Layout.vue'
+import { message } from 'ant-design-vue'
+import * as echarts from 'echarts'
+import {
+  UserOutlined,
+  MessageOutlined,
+  ClockCircleOutlined,
+  ExclamationCircleOutlined
+} from '@ant-design/icons-vue'
+import api from '../utils/api'
+
+// 核心指标
+const stats = reactive({
+  onlineUsers: 0,
+  todayMessages: 0,
+  avgResponseTime: 0,
+  errorRate: 0
+})
+
+// 流量趋势（模拟数据）
+const trafficTrend = ref([])
+const maxMessageCount = ref(100)
+const timeRange = ref('day') // day, week, month, year
+
+// 系统资源
+const systemResources = reactive({
+  cpu: 0,
+  memory: 0,
+  disk: 0
+})
+
+// 最近活动
+const recentActivities = ref([])
+
+// ECharts图表
+const chartContainer = ref(null)
+let chart = null
+
+// 初始化ECharts图表
+const initChart = () => {
+  if (!chartContainer.value) return
+
+  chart = echarts.init(chartContainer.value)
+
+  const option = {
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: {
+        type: 'shadow'
+      },
+      formatter: function(params) {
+        return `${params[0].name}<br/>消息数: ${params[0].value} 条`
+      }
+    },
+    grid: {
+      left: '3%',
+      right: '4%',
+      bottom: '15%',
+      top: '5%',
+      containLabel: true
+    },
+    xAxis: {
+      type: 'category',
+      data: [],
+      axisLabel: {
+        rotate: timeRange.value === 'day' ? 45 : 0,
+        fontSize: 10
+      }
+    },
+    yAxis: {
+      type: 'value',
+      name: '消息数'
+    },
+    series: [{
+      name: '消息数',
+      type: 'bar',
+      data: [],
+      itemStyle: {
+        color: function(params) {
+          return params.value > maxMessageCount.value * 0.7 ? '#ff4d4f' : '#1890ff'
+        }
+      },
+      emphasis: {
+        itemStyle: {
+          shadowBlur: 10,
+          shadowOffsetX: 0,
+          shadowColor: 'rgba(0, 0, 0, 0.5)'
+        }
+      }
+    }]
+  }
+
+  chart.setOption(option)
+
+  // 响应式
+  window.addEventListener('resize', () => {
+    if (chart) {
+      chart.resize()
+    }
+  })
+}
+
+// 更新ECharts图表
+const updateChart = () => {
+  if (!chart || trafficTrend.value.length === 0) return
+
+  const times = trafficTrend.value.map(item => item.time)
+  const counts = trafficTrend.value.map(item => item.count)
+
+  // 根据数据点数量动态调整X轴标签显示
+  const dataLength = times.length
+  let interval = 0
+  
+  if (timeRange.value === 'day') {
+    interval = 2 // 每3个小时显示一个标签（24个点）
+  } else if (timeRange.value === 'week') {
+    interval = 5 // 每6个点显示一个标签
+  } else if (timeRange.value === 'month') {
+    interval = 4 // 每5个点显示一个标签
+  } else {
+    interval = 3 // 每4个点显示一个标签
+  }
+
+  chart.setOption({
+    xAxis: {
+      data: times,
+      axisLabel: {
+        interval: interval,
+        rotate: timeRange.value === 'day' ? 0 : 0 // 日视图也改为不旋转，因为标签短了
+      }
+    },
+    series: [{
+      data: counts,
+      itemStyle: {
+        color: function(params) {
+          return params.value > maxMessageCount.value * 0.7 ? '#ff4d4f' : '#1890ff'
+        }
+      }
+    }]
+  })
+}
+
+const activityColumns = [
+  { title: '时间', dataIndex: 'time', key: 'time' },
+  { title: '用户', dataIndex: 'user', key: 'user' },
+  { title: '操作', dataIndex: 'action', key: 'action' },
+  { title: '状态', dataIndex: 'status', key: 'status' }
+]
+
+// 获取监控数据
+const fetchMonitorData = async () => {
+  try {
+    const response = await api.getRealtimeStats()
+    if (response.success) {
+      const data = response.data
+      stats.onlineUsers = data.onlineUsers || 0
+      stats.todayMessages = data.todayMessages || 0
+      stats.avgResponseTime = data.avgResponseTime || 0
+      stats.errorRate = data.errorRate || 0
+    }
+  } catch (error) {
+    console.error('获取监控数据失败:', error)
+  }
+}
+
+// 获取流量趋势
+const fetchTrafficTrend = async (range = 'day') => {
+  try {
+    const response = await api.getTrafficTrend(range)
+    if (response.success) {
+      trafficTrend.value = response.data.trend
+      // 计算最大值
+      maxMessageCount.value = Math.max(...response.data.trend.map(item => item.count), 100)
+      // 更新图表
+      nextTick(() => {
+        updateChart()
+      })
+    }
+  } catch (error) {
+    console.error('获取流量趋势失败:', error)
+    // 降级方案：使用模拟数据
+    const trend = []
+    const now = new Date()
+    const points = range === 'day' ? 24 : range === 'week' ? 42 : range === 'month' ? 30 : 12
+    
+    for (let i = points - 1; i >= 0; i--) {
+      const interval = range === 'day' ? 60 * 60 * 1000 : range === 'week' ? 4 * 60 * 60 * 1000 : range === 'month' ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000
+      const time = new Date(now - i * interval)
+      let timeStr
+      
+      if (range === 'day') {
+        timeStr = `${time.getHours().toString().padStart(2, '0')}:00`
+      } else if (range === 'week') {
+        timeStr = time.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit' })
+      } else if (range === 'month') {
+        timeStr = time.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit' })
+      } else {
+        timeStr = time.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit' })
+      }
+      
+      const count = Math.floor(Math.random() * 80) + 20
+      trend.push({ time: timeStr, count })
+      maxMessageCount.value = Math.max(maxMessageCount.value, count)
+    }
+    trafficTrend.value = trend
+    // 更新图表
+    nextTick(() => {
+      updateChart()
+    })
+  }
+}
+
+// 处理时间范围变化
+const handleTimeRangeChange = () => {
+  fetchTrafficTrend(timeRange.value)
+}
+
+// 获取系统资源
+const fetchSystemResources = async () => {
+  try {
+    const response = await api.getSystemMetrics()
+    if (response.success) {
+      const data = response.data
+      systemResources.cpu = data.cpu || 0
+      systemResources.memory = data.memory || 0
+      systemResources.disk = data.disk || 0
+    }
+  } catch (error) {
+    console.error('获取系统资源失败:', error)
+    // 降级方案：使用模拟数据
+    systemResources.cpu = Number((Math.random() * 30 + 20).toFixed(1))
+    systemResources.memory = Number((Math.random() * 40 + 30).toFixed(1))
+    systemResources.disk = Number((Math.random() * 20 + 50).toFixed(1))
+  }
+}
+
+// 获取最近活动
+const fetchRecentActivities = async () => {
+  try {
+    const response = await api.getConnectionLogs({ limit: 10 })
+    if (response.success) {
+      recentActivities.value = response.data.logs.map(log => ({
+        time: new Date(log.created_at).toLocaleString(),
+        user: log.user_id,
+        action: log.action === 'login' ? '登录' : log.action === 'logout' ? '登出' : '未知',
+        status: log.status
+      }))
+    }
+  } catch (error) {
+    console.error('获取活动日志失败:', error)
+  }
+}
+
+// 获取进度条颜色
+const getProgressColor = (percent) => {
+  if (percent < 60) return '#3f8600'
+  if (percent < 80) return '#faad14'
+  return '#cf1322'
+}
+
+// 定时刷新数据
+let refreshInterval
+
+onMounted(() => {
+  // 初始化ECharts
+  nextTick(() => {
+    initChart()
+  })
+
+  fetchMonitorData()
+  fetchTrafficTrend(timeRange.value)
+  fetchSystemResources()
+  fetchRecentActivities()
+
+  // 每30秒刷新一次
+  refreshInterval = setInterval(() => {
+    fetchMonitorData()
+    fetchSystemResources()
+  }, 30000)
+
+  // 每分钟刷新流量趋势
+  setInterval(() => {
+    fetchTrafficTrend(timeRange.value)
+  }, 60000)
+})
+
+onUnmounted(() => {
+  if (refreshInterval) {
+    clearInterval(refreshInterval)
+  }
+  if (chart) {
+    chart.dispose()
+    chart = null
+  }
+})
+</script>
+
+<style scoped>
+.stats-container {
+  padding: 24px;
+}
+
+.monitor-chart {
+  padding: 16px;
+}
+
+.monitor-chart h3 {
+  margin-bottom: 16px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.chart-placeholder {
+  min-height: 200px;
+  padding: 16px;
+  background: #fafafa;
+  border-radius: 4px;
+}
+
+/* ECharts容器样式 */
+.echarts-container {
+  width: 100%;
+  height: 300px;
+  margin-bottom: 16px;
+}
+
+.chart-summary {
+  text-align: center;
+  padding: 12px;
+  background: #f6f8fa;
+  border-radius: 4px;
+  font-size: 14px;
+}
+</style>

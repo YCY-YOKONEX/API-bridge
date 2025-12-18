@@ -136,7 +136,7 @@ ws://localhost:3001
 
 ### 4. 发送指令（sendCommand）
 
-向指定用户的 IM 会话发送游戏指令。
+向指定用户的 IM 会话发送游戏指令，并自动记录响应时间。
 
 **请求：**
 ```json
@@ -150,6 +150,12 @@ ws://localhost:3001
 **参数说明：**
 - `userId`: 用户 ID（纯数字格式）
 - `commandId`: 指令 ID
+
+**功能说明：**
+- 自动记录指令发送的开始时间
+- 接收响应后计算响应时间（毫秒）
+- 将响应时间保存到数据库（用于运营监控）
+- 失败的指令响应时间记录为 `null`
 
 **成功响应：**
 ```json
@@ -171,6 +177,11 @@ ws://localhost:3001
   }
 }
 ```
+
+**响应时间统计：**
+- 成功的指令会记录响应时间到数据库
+- 可在运营监控页面查看平均响应时间
+- 用于系统性能分析和优化
 
 **失败响应：**
 ```json
@@ -589,6 +600,7 @@ WebSocket 关闭代码：
    - 最大 WebSocket 连接数: 200个
 7. **事件广播**：所有 IM 事件（消息、状态变化等）会广播给所有 WebSocket 客户端
 8. **资源清理**：建议在使用完毕后调用 `logout` 主动销毁会话
+9. **响应时间统计**：`sendCommand` 会自动记录响应时间，用于运营监控分析
 
 ## 与 HTTP API 对比
 
@@ -597,13 +609,14 @@ WebSocket 关闭代码：
 | 健康检查 | GET /health | type: ping | WebSocket 包含更多统计信息 |
 | 获取状态 | GET /api/status | type: getStatus | 数据格式一致 |
 | 登录 | POST /api/login | type: login | WebSocket 有独立的响应类型 |
-| 发送指令 | POST /api/send-command | type: sendCommand | 都需要提供 userId |
+| 发送指令 | POST /api/send-command | type: sendCommand | 都支持响应时间统计 |
 | 登出 | POST /api/logout | type: logout | WebSocket 有独立的响应类型 |
 | 查询会话 | GET /api/session/:userId | ❌ 不支持 | 仅 HTTP 支持 |
 | 实时推送 | ❌ 不支持 | ✅ 支持 | WebSocket 实时接收 IM 事件 |
 | 连接保持 | ❌ 短连接 | ✅ 长连接 | WebSocket 更高效 |
 | 双向通信 | ❌ 请求-响应 | ✅ 全双工 | WebSocket 支持服务器推送 |
 | 广播能力 | ❌ 无 | ✅ 有 | WebSocket 自动广播 IM 事件 |
+| 运营监控 | GET /api/admin/stats/* | ❌ 不支持 | 仅 HTTP 支持统计查询 | |
 
 ## 优势
 
