@@ -7,6 +7,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
 import AsyncLock from 'async-lock';
 import jwt from 'jsonwebtoken';
+import XMLHttpRequest from 'xhr2';
 import {
   initDatabase,
   verifyAdmin,
@@ -25,6 +26,11 @@ import {
 // 为腾讯云 SDK 提供 WebSocket polyfill (Node.js 环境需要)
 if (typeof global.WebSocket === 'undefined') {
   global.WebSocket = WebSocket;
+}
+
+// 为腾讯云 SDK 提供 XMLHttpRequest polyfill (Node.js 环境需要)
+if (typeof global.XMLHttpRequest === 'undefined') {
+  global.XMLHttpRequest = XMLHttpRequest;
 }
 
 const __filename = fileURLToPath(import.meta.url);
@@ -116,7 +122,7 @@ class IMSession {
         SDKAppID: parseInt(this.appId)
       });
 
-      this.chat.setLogLevel(1);
+      this.chat.setLogLevel(3);
 
       // 注册事件监听器并保存引用
       const onReady = () => {
@@ -291,7 +297,7 @@ class IMSession {
       });
 
       const message = this.chat.createTextMessage({
-        to: this.uid,
+        to: this.userId,
         conversationType: TencentCloudChat.TYPES.CONV_C2C,
         payload: {
           text: messageText
