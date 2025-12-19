@@ -49,7 +49,7 @@ const API_BASE = 'https://suo.jiushu1234.com/api.php';
 // 资源限制配置
 const MAX_SESSIONS = 100;              // 最大会话数
 const MAX_WS_CONNECTIONS = 200;       // 最大 WebSocket 连接数
-const SESSION_TIMEOUT = 240 * 60 * 1000; // 会话超时时间
+const SESSION_TIMEOUT = 3 * 60 * 1000; // 会话超时时间
 const SESSION_CLEANUP_INTERVAL = 5 * 60 * 1000; // 清理检查间隔 (5分钟)
 
 const JWT_SECRET = process.env.JWT_SECRET || 'f9e2a1b8c7d4e6f3a0c5d2e9b8f1a3c7';
