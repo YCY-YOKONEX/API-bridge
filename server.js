@@ -55,8 +55,8 @@ const SESSION_CLEANUP_INTERVAL = 5 * 60 * 1000; // 清理检查间隔 (5分钟)
 const JWT_SECRET = process.env.JWT_SECRET || 'f9e2a1b8c7d4e6f3a0c5d2e9b8f1a3c7';
 const JWT_EXPIRES_IN = '24h';
 
-// 全局锁管理器
-const lock = new AsyncLock({ timeout: 10000 });
+// 全局锁管理器 (超时时间需大于 SDK_READY 等待时间)
+const lock = new AsyncLock({ timeout: 25000 });
 
 // 初始化数据库
 initDatabase();
@@ -108,6 +108,11 @@ class IMSession {
     this.createdAt = Date.now();
     this.lastAccessTime = Date.now();
     this.eventHandlers = new Map(); // 存储事件处理器引用，用于清理
+    // 内部 Promise 用于等待 SDK 就绪，避免事件监听时序问题
+    this._readyResolve = null;
+    this._readyPromise = new Promise((resolve) => {
+      this._readyResolve = resolve;
+    });
   }
 
   /**
@@ -127,6 +132,11 @@ class IMSession {
       // 注册事件监听器并保存引用
       const onReady = () => {
         this.isReady = true;
+        // 触发内部 Promise，通知所有等待者
+        if (this._readyResolve) {
+          this._readyResolve();
+          this._readyResolve = null;
+        }
         log('INFO', `[${this.userId}] ✓ IM SDK 就绪`);
         if (broadcastCallback) {
           broadcastCallback({
@@ -232,8 +242,14 @@ class IMSession {
         userSig: this.sign
       });
 
+      // 处理重复登录：SDK 可能不会再触发 SDK_READY，需要直接标记就绪
       if (loginRes.data?.repeatLogin) {
-        log('WARN', `[${this.userId}] 重复登录:`, loginRes.data.errorInfo);
+        log('WARN', `[${this.userId}] 重复登录，直接标记为就绪状态`);
+        this.isReady = true;
+        if (this._readyResolve) {
+          this._readyResolve();
+          this._readyResolve = null;
+        }
       }
 
       // 等待 SDK 就绪
@@ -249,34 +265,21 @@ class IMSession {
   }
 
   /**
-   * 等待 SDK 就绪
+   * 等待 SDK 就绪 - 使用内部 Promise 避免事件监听时序问题
    */
   waitReady(timeout = 15000) {
+    // 已经就绪，直接返回
     if (this.isReady) return Promise.resolve();
 
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        cleanup();
-        reject(new Error('等待 SDK_READY 超时'));
-      }, timeout);
-
-      const onReady = () => {
-        this.isReady = true;
-        cleanup();
-        resolve();
-      };
-
-      const cleanup = () => {
-        clearTimeout(timer);
-        if (this.chat) {
-          this.chat.off(TencentCloudChat.EVENT.SDK_READY, onReady);
-        }
-      };
-
-      if (this.chat) {
-        this.chat.on(TencentCloudChat.EVENT.SDK_READY, onReady);
-      }
-    });
+    // 使用内部 Promise 配合超时竞争
+    return Promise.race([
+      this._readyPromise,
+      new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('等待 SDK_READY 超时'));
+        }, timeout);
+      })
+    ]);
   }
 
   /**
