@@ -4,24 +4,31 @@
   "description": "Node.js IM service for CS2-DG_LAB",
   "main": "server.js",
   "type": "module",
-  "bin": "server.js",
+  "bin": "build/index.js",
   "pkg": {
-    "targets": ["node18-win-x64"],
+    "targets": [
+      "node18-win-x64"
+    ],
     "outputPath": "dist"
   },
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "build": "pkg . --out-path dist"
+    "build:esbuild": "esbuild server.js --bundle --platform=node --target=node18 --format=cjs --outfile=build/server.cjs",
+    "build": "npm run build:esbuild && pkg build/server.cjs --out-path dist --targets node18-win-x64"
   },
-  "keywords": [
-  ],
+  "keywords": [],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "@tencentcloud/chat": "^3.2.0",
+    "cors": "^2.8.5",
     "express": "^4.18.2",
-    "ws": "^8.16.0",
-    "cors": "^2.8.5"
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "^0.38.4",
+    "esbuild": "^0.27.2",
+    "pkg": "^5.8.1"
   }
 }

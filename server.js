@@ -7,8 +7,13 @@ import { fileURLToPath } from 'url';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// 兼容 ES Module 和 CommonJS
+const __filename = typeof import.meta !== 'undefined' && import.meta.url
+  ? fileURLToPath(import.meta.url)
+  : (typeof __filename !== 'undefined' ? __filename : process.cwd() + '/server.js');
+const __dirname = typeof import.meta !== 'undefined' && import.meta.url
+  ? path.dirname(fileURLToPath(import.meta.url))
+  : (typeof __dirname !== 'undefined' ? __dirname : process.cwd());
 
 const app = express();
 const PORT = 3001;
