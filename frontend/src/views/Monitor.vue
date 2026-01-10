@@ -2,62 +2,73 @@
   <Layout>
     <!-- 核心指标卡片 -->
     <div class="stats-container">
-      <a-row :gutter="16">
-        <a-col :span="6">
-          <a-card>
-            <a-statistic
-              title="在线用户"
-              :value="stats.onlineUsers"
-              :value-style="{ color: '#3f8600' }"
-            >
-              <template #prefix>
-                <UserOutlined />
-              </template>
-            </a-statistic>
-          </a-card>
-        </a-col>
-        <a-col :span="6">
-          <a-card>
-            <a-statistic
-              title="今日消息"
-              :value="stats.todayMessages"
-              :value-style="{ color: '#1890ff' }"
-            >
-              <template #prefix>
-                <MessageOutlined />
-              </template>
-            </a-statistic>
-          </a-card>
-        </a-col>
-        <a-col :span="6">
-          <a-card>
-            <a-statistic
-              title="系统响应(ms)"
-              :value="stats.avgResponseTime"
-              :precision="2"
-              :value-style="{ color: '#faad14' }"
-            >
-              <template #prefix>
-                <ClockCircleOutlined />
-              </template>
-            </a-statistic>
-          </a-card>
-        </a-col>
-        <a-col :span="6">
-          <a-card>
-            <a-statistic
-              title="错误率(%)"
-              :value="stats.errorRate"
-              :precision="2"
-              :value-style="{ color: stats.errorRate > 1 ? '#cf1322' : '#3f8600' }"
-            >
-              <template #prefix>
-                <ExclamationCircleOutlined />
-              </template>
-            </a-statistic>
-          </a-card>
-        </a-col>
-      </a-row>
+      <a-spin :spinning="loadingStats">
+        <a-alert
+          v-if="statsError"
+          :message="statsError"
+          type="error"
+          closable
+          show-icon
+          style="margin-bottom: 16px"
+          @close="statsError = null"
+        />
+        <a-row :gutter="16">
+          <a-col :span="6">
+            <a-card>
+              <a-statistic
+                title="在线用户"
+                :value="stats.onlineUsers"
+                :value-style="{ color: '#3f8600' }"
+              >
+                <template #prefix>
+                  <UserOutlined />
+                </template>
+              </a-statistic>
+            </a-card>
+          </a-col>
+          <a-col :span="6">
+            <a-card>
+              <a-statistic
+                title="今日消息"
+                :value="stats.todayMessages"
+                :value-style="{ color: '#1890ff' }"
+              >
+                <template #prefix>
+                  <MessageOutlined />
+                </template>
+              </a-statistic>
+            </a-card>
+          </a-col>
+          <a-col :span="6">
+            <a-card>
+              <a-statistic
+                title="系统响应(ms)"
+                :value="stats.avgResponseTime"
+                :precision="2"
+                :value-style="{ color: '#faad14' }"
+              >
+                <template #prefix>
+                  <ClockCircleOutlined />
+                </template>
+              </a-statistic>
+            </a-card>
+          </a-col>
+          <a-col :span="6">
+            <a-card>
+              <a-statistic
+                title="错误率(%)"
+                :value="stats.errorRate"
+                :precision="2"
+                :value-style="{ color: stats.errorRate > 1 ? '#cf1322' : '#3f8600' }"
+              >
+                <template #prefix>
+                  <ExclamationCircleOutlined />
+                </template>
+              </a-statistic>
+            </a-card>
+          </a-col>
+        </a-row>
+      </a-spin>
     </div>
 
     <!-- 实时监控 -->
@@ -74,33 +85,58 @@
                 <a-radio-button value="year">年</a-radio-button>
               </a-radio-group>
             </div>
-            <div ref="chartContainer" class="echarts-container"></div>
-            <div class="chart-summary">
-              <a-space>
-                <span>峰值: {{ maxMessageCount }} 条</span>
-                <a-divider type="vertical" />
-                <span>平均值: {{ Math.round(trafficTrend.reduce((sum, item) => sum + item.count, 0) / trafficTrend.length) }} 条{{ timeRange === 'day' ? '/小时' : timeRange === 'week' ? '/4小时' : timeRange === 'month' ? '/天' : '/周' }}</span>
-              </a-space>
-            </div>
+            <a-spin :spinning="loadingTraffic">
+              <a-alert
+                v-if="trafficError"
+                :message="trafficError"
+                type="error"
+                closable
+                show-icon
+                style="margin-bottom: 16px"
+                @close="trafficError = null"
+              />
+              <div v-if="!trafficError && trafficTrend.length > 0">
+                <div ref="chartContainer" class="echarts-container"></div>
+                <div class="chart-summary">
+                  <a-space>
+                    <span>峰值: {{ maxMessageCount }} 条</span>
+                    <a-divider type="vertical" />
+                    <span>平均值: {{ Math.round(trafficTrend.reduce((sum, item) => sum + item.count, 0) / trafficTrend.length) }} 条{{ timeRange === 'day' ? '/小时' : timeRange === 'week' ? '/4小时' : timeRange === 'month' ? '/天' : '/周' }}</span>
+                  </a-space>
+                </div>
+              </div>
+              <a-empty v-else-if="!trafficError && !loadingTraffic" description="暂无数据" />
+            </a-spin>
           </div>
         </a-col>
         <a-col :span="12">
           <div class="monitor-chart">
             <h3>系统资源</h3>
-            <a-space direction="vertical" style="width: 100%">
-              <div>
-                <div style="margin-bottom: 8px">CPU使用率</div>
-                <a-progress :percent="systemResources.cpu" :stroke-color="getProgressColor(systemResources.cpu)" />
-              </div>
-              <div>
-                <div style="margin-bottom: 8px">内存使用率</div>
-                <a-progress :percent="systemResources.memory" :stroke-color="getProgressColor(systemResources.memory)" />
-              </div>
-              <div>
-                <div style="margin-bottom: 8px">磁盘使用率</div>
-                <a-progress :percent="systemResources.disk" :stroke-color="getProgressColor(systemResources.disk)" />
-              </div>
-            </a-space>
+            <a-spin :spinning="loadingSystem">
+              <a-alert
+                v-if="systemError"
+                :message="systemError"
+                type="error"
+                closable
+                show-icon
+                style="margin-bottom: 16px"
+                @close="systemError = null"
+              />
+              <a-space v-if="!systemError" direction="vertical" style="width: 100%">
+                <div>
+                  <div style="margin-bottom: 8px">CPU使用率</div>
+                  <a-progress :percent="systemResources.cpu" :stroke-color="getProgressColor(systemResources.cpu)" />
+                </div>
+                <div>
+                  <div style="margin-bottom: 8px">内存使用率</div>
+                  <a-progress :percent="systemResources.memory" :stroke-color="getProgressColor(systemResources.memory)" />
+                </div>
+                <div>
+                  <div style="margin-bottom: 8px">磁盘使用率</div>
+                  <a-progress :percent="systemResources.disk" :stroke-color="getProgressColor(systemResources.disk)" />
+                </div>
+              </a-space>
+            </a-spin>
           </div>
         </a-col>
       </a-row>
@@ -108,20 +144,33 @@
 
     <!-- 最近活动 -->
     <a-card title="最近活动" :bordered="false" style="margin-top: 24px">
-      <a-table
-        :columns="activityColumns"
-        :data-source="recentActivities"
-        :pagination="false"
-        size="small"
-      >
-        <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'status'">
-            <a-tag :color="record.status === 'success' ? 'success' : 'error'">
-              {{ record.status === 'success' ? '成功' : '失败' }}
-            </a-tag>
+      <a-spin :spinning="loadingActivities">
+        <a-alert
+          v-if="activitiesError"
+          :message="activitiesError"
+          type="error"
+          closable
+          show-icon
+          style="margin-bottom: 16px"
+          @close="activitiesError = null"
+        />
+        <a-table
+          v-if="!activitiesError"
+          :columns="activityColumns"
+          :data-source="recentActivities"
+          :pagination="false"
+          size="small"
+        >
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'status'">
+              <a-tag :color="record.status === 'success' ? 'success' : 'error'">
+                {{ record.status === 'success' ? '成功' : '失败' }}
+              </a-tag>
+            </template>
           </template>
-        </template>
-      </a-table>
+        </a-table>
+        <a-empty v-else-if="!activitiesError && !loadingActivities && recentActivities.length === 0" description="暂无活动记录" />
+      </a-spin>
     </a-card>
   </Layout>
 </template>
@@ -146,6 +195,18 @@ const stats = reactive({
   avgResponseTime: 0,
   errorRate: 0
 })
+
+// 加载状态
+const loadingStats = ref(false)
+const loadingTraffic = ref(false)
+const loadingSystem = ref(false)
+const loadingActivities = ref(false)
+
+// 错误状态
+const statsError = ref(null)
+const trafficError = ref(null)
+const systemError = ref(null)
+const activitiesError = ref(null)
 
 // 流量趋势（模拟数据）
 const trafficTrend = ref([])
@@ -279,6 +340,8 @@ const activityColumns = [
 
 // 获取监控数据
 const fetchMonitorData = async () => {
+  loadingStats.value = true
+  statsError.value = null
   try {
     const response = await api.getRealtimeStats()
     if (response.success) {
@@ -287,14 +350,21 @@ const fetchMonitorData = async () => {
       stats.todayMessages = data.todayMessages || 0
       stats.avgResponseTime = data.avgResponseTime || 0
       stats.errorRate = data.errorRate || 0
+    } else {
+      statsError.value = response.message || '获取统计数据失败'
     }
   } catch (error) {
     console.error('获取监控数据失败:', error)
+    statsError.value = '获取统计数据失败，请稍后重试'
+  } finally {
+    loadingStats.value = false
   }
 }
 
 // 获取流量趋势
 const fetchTrafficTrend = async (range = 'day') => {
+  loadingTraffic.value = true
+  trafficError.value = null
   try {
     const response = await api.getTrafficTrend(range)
     if (response.success) {
@@ -305,38 +375,16 @@ const fetchTrafficTrend = async (range = 'day') => {
       nextTick(() => {
         updateChart()
       })
+    } else {
+      trafficError.value = response.message || '获取流量趋势失败'
+      trafficTrend.value = []
     }
   } catch (error) {
     console.error('获取流量趋势失败:', error)
-    // 降级方案：使用模拟数据
-    const trend = []
-    const now = new Date()
-    const points = range === 'day' ? 24 : range === 'week' ? 42 : range === 'month' ? 30 : 12
-    
-    for (let i = points - 1; i >= 0; i--) {
-      const interval = range === 'day' ? 60 * 60 * 1000 : range === 'week' ? 4 * 60 * 60 * 1000 : range === 'month' ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000
-      const time = new Date(now - i * interval)
-      let timeStr
-      
-      if (range === 'day') {
-        timeStr = `${time.getHours().toString().padStart(2, '0')}:00`
-      } else if (range === 'week') {
-        timeStr = time.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit' })
-      } else if (range === 'month') {
-        timeStr = time.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit' })
-      } else {
-        timeStr = time.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit' })
-      }
-      
-      const count = Math.floor(Math.random() * 80) + 20
-      trend.push({ time: timeStr, count })
-      maxMessageCount.value = Math.max(maxMessageCount.value, count)
-    }
-    trafficTrend.value = trend
-    // 更新图表
-    nextTick(() => {
-      updateChart()
-    })
+    trafficError.value = '获取流量趋势失败，请稍后重试'
+    trafficTrend.value = []
+  } finally {
+    loadingTraffic.value = false
   }
 }
 
@@ -347,6 +395,8 @@ const handleTimeRangeChange = () => {
 
 // 获取系统资源
 const fetchSystemResources = async () => {
+  loadingSystem.value = true
+  systemError.value = null
   try {
     const response = await api.getSystemMetrics()
     if (response.success) {
@@ -354,18 +404,21 @@ const fetchSystemResources = async () => {
       systemResources.cpu = data.cpu || 0
       systemResources.memory = data.memory || 0
       systemResources.disk = data.disk || 0
+    } else {
+      systemError.value = response.message || '获取系统资源失败'
     }
   } catch (error) {
     console.error('获取系统资源失败:', error)
-    // 降级方案：使用模拟数据
-    systemResources.cpu = Number((Math.random() * 30 + 20).toFixed(1))
-    systemResources.memory = Number((Math.random() * 40 + 30).toFixed(1))
-    systemResources.disk = Number((Math.random() * 20 + 50).toFixed(1))
+    systemError.value = '获取系统资源失败，请稍后重试'
+  } finally {
+    loadingSystem.value = false
   }
 }
 
 // 获取最近活动
 const fetchRecentActivities = async () => {
+  loadingActivities.value = true
+  activitiesError.value = null
   try {
     const response = await api.getConnectionLogs({ limit: 10 })
     if (response.success) {
@@ -375,9 +428,14 @@ const fetchRecentActivities = async () => {
         action: log.action === 'login' ? '登录' : log.action === 'logout' ? '登出' : '未知',
         status: log.status
       }))
+    } else {
+      activitiesError.value = response.message || '获取活动日志失败'
     }
   } catch (error) {
     console.error('获取活动日志失败:', error)
+    activitiesError.value = '获取活动日志失败，请稍后重试'
+  } finally {
+    loadingActivities.value = false
   }
 }
 

@@ -76,6 +76,7 @@ const selectedKeys = computed(() => {
 const handleLogout = () => {
   localStorage.removeItem('admin_token')
   localStorage.removeItem('admin_username')
+  localStorage.removeItem('admin_login_time')
   message.success('已退出登录')
   router.push('/login')
 }

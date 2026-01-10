@@ -84,6 +84,7 @@ const handleLogin = async () => {
     if (response.success) {
       localStorage.setItem('admin_token', response.data.token)
       localStorage.setItem('admin_username', response.data.username)
+      localStorage.setItem('admin_login_time', Date.now().toString())
       message.success('登录成功')
       router.push('/')
     } else {

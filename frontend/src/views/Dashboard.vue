@@ -56,6 +56,64 @@
           </a-card>
         </a-col>
       </a-row>
+
+      <!-- 第二行：运营统计 -->
+      <a-row :gutter="16" style="margin-top: 16px">
+        <a-col :span="6">
+          <a-card>
+            <a-statistic
+              title="今日消息"
+              :value="operationStats.todayMessages"
+              :value-style="{ color: '#1890ff' }"
+            >
+              <template #prefix>
+                <MessageOutlined />
+              </template>
+            </a-statistic>
+          </a-card>
+        </a-col>
+        <a-col :span="6">
+          <a-card>
+            <a-statistic
+              title="系统响应(ms)"
+              :value="operationStats.avgResponseTime"
+              :precision="2"
+              :value-style="{ color: '#faad14' }"
+            >
+              <template #prefix>
+                <ClockCircleOutlined />
+              </template>
+            </a-statistic>
+          </a-card>
+        </a-col>
+        <a-col :span="6">
+          <a-card>
+            <a-statistic
+              title="错误率(%)"
+              :value="operationStats.errorRate"
+              :precision="2"
+              :value-style="{ color: operationStats.errorRate > 1 ? '#cf1322' : '#3f8600' }"
+            >
+              <template #prefix>
+                <ExclamationCircleOutlined />
+              </template>
+            </a-statistic>
+          </a-card>
+        </a-col>
+        <a-col :span="6">
+          <a-card>
+            <a-statistic
+              title="在线用户"
+              :value="operationStats.onlineUsers"
+              :value-style="{ color: '#52c41a' }"
+            >
+              <template #prefix>
+                <TeamOutlined />
+              </template>
+            </a-statistic>
+          </a-card>
+        </a-col>
+      </a-row>
     </div>
 
     <!-- 用户会话列表 -->
@@ -171,7 +229,11 @@ import {
   ReloadOutlined,
   DashboardOutlined,
   FileTextOutlined,
-  SettingOutlined
+  SettingOutlined,
+  MessageOutlined,
+  ClockCircleOutlined,
+  ExclamationCircleOutlined,
+  TeamOutlined
 } from '@ant-design/icons-vue'
 import dayjs from 'dayjs'
 import api from '../utils/api'
@@ -186,6 +248,14 @@ const stats = reactive({
   maxSessions: 0,
   wsConnections: 0,
   maxWsConnections: 0
+})
+
+// 运营统计数据
+const operationStats = reactive({
+  todayMessages: 0,
+  avgResponseTime: 0,
+  errorRate: 0,
+  onlineUsers: 0
 })
 
 const sessions = ref([])
@@ -285,6 +355,22 @@ const refreshSessions = async () => {
   }
 }
 
+// 获取运营统计数据
+const fetchOperationStats = async () => {
+  try {
+    const response = await api.getRealtimeStats()
+    if (response.success) {
+      const data = response.data
+      operationStats.todayMessages = data.todayMessages || 0
+      operationStats.avgResponseTime = data.avgResponseTime || 0
+      operationStats.errorRate = data.errorRate || 0
+      operationStats.onlineUsers = data.onlineUsers || 0
+    }
+  } catch (error) {
+    console.error('获取运营统计失败:', error)
+  }
+}
+
 // 断开用户连接
 const disconnectUser = async (userId) => {
   try {
@@ -337,7 +423,13 @@ const connectWebSocket = () => {
 
 onMounted(() => {
   refreshSessions()
+  fetchOperationStats()
   connectWebSocket()
+
+  // 每30秒刷新一次运营统计
+  setInterval(() => {
+    fetchOperationStats()
+  }, 30000)
 })
 
 onUnmounted(() => {
