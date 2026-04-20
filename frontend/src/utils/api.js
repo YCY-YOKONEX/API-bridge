@@ -302,5 +302,44 @@ export default {
   // 获取系统指标
   getSystemMetrics() {
     return api.get('/api/admin/stats/system-metrics')
+  },
+
+  getReportOverview(params = {}) {
+    return api.get('/api/admin/reports/overview', { params })
+  },
+
+  getReportTrends(params = {}) {
+    return api.get('/api/admin/reports/trends', { params })
+  },
+
+  getReportDistributions(params = {}) {
+    return api.get('/api/admin/reports/distributions', { params })
+  },
+
+  getReportRankings(params = {}) {
+    return api.get('/api/admin/reports/rankings', { params })
+  },
+
+  getReportDetails(params = {}) {
+    return api.get('/api/admin/reports/details', { params })
+  },
+
+  getReportSummary(params = {}) {
+    return api.get('/api/admin/reports/summary', { params })
+  },
+
+  async exportReport(payload = {}) {
+    const response = await api.post('/api/admin/reports/export', payload, {
+      responseType: 'blob'
+    })
+
+    const blob = new Blob([response], { type: 'text/csv;charset=utf-8' })
+    const link = document.createElement('a')
+    const url = window.URL.createObjectURL(blob)
+    link.href = url
+    link.download = `report-${Date.now()}.csv`
+    link.click()
+    window.URL.revokeObjectURL(url)
+    return true
   }
 }

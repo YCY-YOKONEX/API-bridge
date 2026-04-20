@@ -423,47 +423,18 @@ export function getLogStats() {
 export function getRealtimeStats() {
   try {
     const now = Date.now();
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const todayStartTime = todayStart.getTime();
-
-    // 在线用户（活跃会话数）
-    const onlineUsers = db.prepare(
-      'SELECT COUNT(DISTINCT user_id) as count FROM connection_logs WHERE action = ? AND status = ? AND created_at >= ?'
-    ).get('login', 'success', todayStartTime);
-
-    // 今日消息量（指令日志总数）
-    const todayMessages = db.prepare(
-      'SELECT COUNT(*) as count FROM command_logs WHERE created_at >= ?'
-    ).get(todayStartTime);
-
-    // 错误率（今日失败指令占比）
-    const failedCommands = db.prepare(
-      'SELECT COUNT(*) as count FROM command_logs WHERE status = ? AND created_at >= ?'
-    ).get('failed', todayStartTime);
-
-    const totalCommandsToday = db.prepare(
-      'SELECT COUNT(*) as count FROM command_logs WHERE created_at >= ?'
-    ).get(todayStartTime);
-
-    const errorRate = totalCommandsToday.count > 0
-      ? Number(((failedCommands.count / totalCommandsToday.count) * 100).toFixed(2))
-      : 0;
-
-    // 平均响应时间（从今日成功的指令日志中计算）
-    const avgResponseResult = db.prepare(
-      'SELECT AVG(response_time) as avg_time FROM command_logs WHERE status = ? AND response_time IS NOT NULL AND created_at >= ?'
-    ).get('success', todayStartTime);
-
-    const avgResponseTime = avgResponseResult.avg_time ? Number(avgResponseResult.avg_time.toFixed(2)) : 0;
+    const overview = getReportOverviewStats({
+      presetRange: 'today',
+      granularity: 'hour'
+    });
 
     return {
       success: true,
       data: {
-        onlineUsers: onlineUsers.count,
-        todayMessages: todayMessages.count,
-        errorRate: errorRate,
-        avgResponseTime: avgResponseTime,
+        onlineUsers: overview.onlineUsers,
+        todayMessages: overview.todayMessages,
+        errorRate: overview.errorRate,
+        avgResponseTime: overview.avgResponseTime,
         timestamp: now
       }
     };
@@ -478,80 +449,373 @@ export function getRealtimeStats() {
  */
 export function getTrafficTrend(range = 'day') {
   try {
-    const now = Date.now();
-    let startTime, interval, intervalCount, timeFormat;
-
-    switch (range) {
-      case 'week':
-        startTime = now - (7 * 24 * 60 * 60 * 1000); // 7天
-        interval = 4 * 60 * 60 * 1000; // 4小时间隔
-        intervalCount = 42; // 7天 * 6个4小时区间
-        timeFormat = 'MM-DD HH:mm';
-        break;
-      case 'month':
-        startTime = now - (30 * 24 * 60 * 60 * 1000); // 30天
-        interval = 24 * 60 * 60 * 1000; // 1天间隔
-        intervalCount = 30;
-        timeFormat = 'MM-DD';
-        break;
-      case 'year':
-        startTime = now - (365 * 24 * 60 * 60 * 1000); // 365天
-        interval = 7 * 24 * 60 * 60 * 1000; // 1周间隔
-        intervalCount = 52;
-        timeFormat = 'YYYY-MM';
-        break;
-      default: // day - 按小时统计，显示整点数据
-        startTime = now - (24 * 60 * 60 * 1000); // 1天
-        interval = 60 * 60 * 1000; // 1小时间隔
-        intervalCount = 24; // 24小时
-        timeFormat = 'HH:00';
-        break;
-    }
-
-    const trend = [];
-
-    // 按时间间隔分组统计指令日志
-    for (let i = 0; i < intervalCount; i++) {
-      const intervalStart = startTime + (i * interval);
-      const intervalEnd = intervalStart + interval;
-
-      const count = db.prepare(
-        `SELECT COUNT(*) as count FROM command_logs 
-         WHERE created_at >= ? AND created_at < ?`
-      ).get(intervalStart, intervalEnd);
-
-      const time = new Date(intervalStart);
-      let timeStr;
-
-      if (range === 'week') {
-        timeStr = time.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-      } else if (range === 'month') {
-        timeStr = time.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit' });
-      } else if (range === 'year') {
-        timeStr = time.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit' });
-      } else {
-        // day: 显示整点时间，如 00:00, 01:00, 02:00...
-        timeStr = `${time.getHours().toString().padStart(2, '0')}:00`;
-      }
-
-      trend.push({
-        time: timeStr,
-        count: count.count,
-        timestamp: intervalStart
-      });
-    }
+    const rangePresetMap = {
+      day: { presetRange: 'today', granularity: 'hour', interval: '1小时' },
+      week: { presetRange: 'last7days', granularity: 'hour', interval: '1小时' },
+      month: { presetRange: 'last30days', granularity: 'day', interval: '1天' },
+      year: { presetRange: 'thisMonth', granularity: 'week', interval: '1周' }
+    };
+    const config = rangePresetMap[range] || rangePresetMap.day;
+    const trend = getReportTrendPoints(config, 'messageCount').map(item => ({
+      time: item.time,
+      count: item.value,
+      timestamp: item.extra.timestamp
+    }));
 
     return {
       success: true,
       data: {
         trend,
         range,
-        interval: range === 'day' ? '1小时' : range === 'week' ? '4小时' : range === 'month' ? '1天' : '1周'
+        interval: config.interval
       }
     };
   } catch (error) {
     console.error('[数据库] 获取流量趋势失败:', error);
     return { success: false, message: '获取趋势失败' };
+  }
+}
+
+function toTimestamp(value) {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getPresetRangeWindow(presetRange = 'today') {
+  const now = Date.now();
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
+  switch (presetRange) {
+    case 'realtime':
+      return {
+        startTime: now - (60 * 60 * 1000),
+        endTime: now
+      };
+    case 'last7days':
+      return {
+        startTime: now - (7 * 24 * 60 * 60 * 1000),
+        endTime: now
+      };
+    case 'last30days':
+      return {
+        startTime: now - (30 * 24 * 60 * 60 * 1000),
+        endTime: now
+      };
+    case 'thisMonth': {
+      const monthStart = new Date();
+      monthStart.setDate(1);
+      monthStart.setHours(0, 0, 0, 0);
+      return {
+        startTime: monthStart.getTime(),
+        endTime: now
+      };
+    }
+    case 'today':
+    default:
+      return {
+        startTime: todayStart.getTime(),
+        endTime: now
+      };
+  }
+}
+
+function resolveReportWindow(query = {}) {
+  const customStart = toTimestamp(query.startTime);
+  const customEnd = toTimestamp(query.endTime);
+
+  if (customStart && customEnd && customEnd >= customStart) {
+    return {
+      startTime: customStart,
+      endTime: customEnd
+    };
+  }
+
+  return getPresetRangeWindow(query.presetRange);
+}
+
+function buildCommandWhereClause(query = {}) {
+  const { startTime, endTime } = resolveReportWindow(query);
+  const clauses = ['created_at >= ?', 'created_at <= ?'];
+  const params = [startTime, endTime];
+
+  if (query.userId) {
+    clauses.push('user_id = ?');
+    params.push(query.userId);
+  }
+
+  const commandType = query.commandType && query.commandType !== 'all' ? query.commandType : null;
+  if (commandType) {
+    clauses.push('command_id = ?');
+    params.push(commandType);
+  }
+
+  const commandStatus = query.commandStatus && query.commandStatus !== 'all' ? query.commandStatus : null;
+  if (commandStatus) {
+    clauses.push('status = ?');
+    params.push(commandStatus);
+  }
+
+  if (query.latencyMin > 0) {
+    clauses.push('response_time >= ?');
+    params.push(query.latencyMin);
+  }
+
+  if (query.latencyMax > 0) {
+    clauses.push('response_time <= ?');
+    params.push(query.latencyMax);
+  }
+
+  return {
+    startTime,
+    endTime,
+    whereClause: clauses.join(' AND '),
+    params
+  };
+}
+
+function buildConnectionWhereClause(query = {}) {
+  const { startTime, endTime } = resolveReportWindow(query);
+  const clauses = ['created_at >= ?', 'created_at <= ?'];
+  const params = [startTime, endTime];
+
+  if (query.userId) {
+    clauses.push('user_id = ?');
+    params.push(query.userId);
+  }
+
+  return {
+    startTime,
+    endTime,
+    whereClause: clauses.join(' AND '),
+    params
+  };
+}
+
+function getPercentile(values, percentile) {
+  if (!values.length) {
+    return 0;
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const index = Math.max(0, Math.ceil((percentile / 100) * sorted.length) - 1);
+  return sorted[index];
+}
+
+function formatTrendLabel(timestamp, granularity) {
+  const time = new Date(timestamp);
+
+  if (granularity === 'week') {
+    return time.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit' });
+  }
+
+  if (granularity === 'month') {
+    return time.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit' });
+  }
+
+  if (granularity === 'day') {
+    return time.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit' });
+  }
+
+  return `${time.getHours().toString().padStart(2, '0')}:00`;
+}
+
+function resolveTrendConfig(granularity = 'hour', windowStart, windowEnd) {
+  const duration = Math.max(1, windowEnd - windowStart);
+
+  if (granularity === 'month') {
+    return {
+      step: 30 * 24 * 60 * 60 * 1000,
+      bucketCount: Math.max(1, Math.ceil(duration / (30 * 24 * 60 * 60 * 1000)))
+    };
+  }
+
+  if (granularity === 'week') {
+    return {
+      step: 7 * 24 * 60 * 60 * 1000,
+      bucketCount: Math.max(1, Math.ceil(duration / (7 * 24 * 60 * 60 * 1000)))
+    };
+  }
+
+  if (granularity === 'day') {
+    return {
+      step: 24 * 60 * 60 * 1000,
+      bucketCount: Math.max(1, Math.ceil(duration / (24 * 60 * 60 * 1000)))
+    };
+  }
+
+  return {
+    step: 60 * 60 * 1000,
+    bucketCount: Math.max(1, Math.ceil(duration / (60 * 60 * 1000)))
+  };
+}
+
+export function getReportOverviewStats(query = {}) {
+  try {
+    const commandFilter = buildCommandWhereClause(query);
+    const connectionFilter = buildConnectionWhereClause(query);
+
+    const onlineUsers = db.prepare(
+      `SELECT COUNT(DISTINCT user_id) AS count
+       FROM connection_logs
+       WHERE ${connectionFilter.whereClause} AND action = ? AND status = ?`
+    ).get(...connectionFilter.params, 'login', 'success');
+
+    const activeUsers = db.prepare(
+      `SELECT COUNT(DISTINCT user_id) AS count
+       FROM command_logs
+       WHERE ${commandFilter.whereClause}`
+    ).get(...commandFilter.params);
+
+    const totalCommands = db.prepare(
+      `SELECT COUNT(*) AS count
+       FROM command_logs
+       WHERE ${commandFilter.whereClause}`
+    ).get(...commandFilter.params);
+
+    const successCommands = db.prepare(
+      `SELECT COUNT(*) AS count
+       FROM command_logs
+       WHERE ${commandFilter.whereClause} AND status = ?`
+    ).get(...commandFilter.params, 'success');
+
+    const failedCommands = db.prepare(
+      `SELECT COUNT(*) AS count
+       FROM command_logs
+       WHERE ${commandFilter.whereClause} AND status = ?`
+    ).get(...commandFilter.params, 'failed');
+
+    const avgResponseResult = db.prepare(
+      `SELECT AVG(response_time) AS avg_time
+       FROM command_logs
+       WHERE ${commandFilter.whereClause} AND status = ? AND response_time IS NOT NULL`
+    ).get(...commandFilter.params, 'success');
+
+    const responseSamples = db.prepare(
+      `SELECT response_time
+       FROM command_logs
+       WHERE ${commandFilter.whereClause} AND status = ? AND response_time IS NOT NULL
+       ORDER BY response_time ASC`
+    ).all(...commandFilter.params, 'success');
+
+    const responseTimes = responseSamples
+      .map(item => item.response_time)
+      .filter(value => Number.isFinite(value));
+
+    const total = totalCommands.count || 0;
+    const successRate = total > 0 ? Number(((successCommands.count / total) * 100).toFixed(2)) : 0;
+    const errorRate = total > 0 ? Number(((failedCommands.count / total) * 100).toFixed(2)) : 0;
+
+    return {
+      onlineUsers: onlineUsers.count || 0,
+      activeUsers: activeUsers.count || 0,
+      todayMessages: total,
+      totalCommands: total,
+      successRate,
+      avgResponseTime: avgResponseResult.avg_time ? Number(avgResponseResult.avg_time.toFixed(2)) : 0,
+      p50ResponseTime: getPercentile(responseTimes, 50),
+      p95ResponseTime: getPercentile(responseTimes, 95),
+      p99ResponseTime: getPercentile(responseTimes, 99),
+      errorRate,
+      windowStart: commandFilter.startTime,
+      windowEnd: commandFilter.endTime
+    };
+  } catch (error) {
+    console.error('[数据库] 获取报表总览失败:', error);
+    return {
+      onlineUsers: 0,
+      activeUsers: 0,
+      todayMessages: 0,
+      totalCommands: 0,
+      successRate: 0,
+      avgResponseTime: 0,
+      p50ResponseTime: 0,
+      p95ResponseTime: 0,
+      p99ResponseTime: 0,
+      errorRate: 0,
+      windowStart: 0,
+      windowEnd: 0
+    };
+  }
+}
+
+export function getReportTrendPoints(query = {}, metric = 'messageCount') {
+  try {
+    const { startTime, endTime } = resolveReportWindow(query);
+    const granularity = query.granularity || 'hour';
+    const { step, bucketCount } = resolveTrendConfig(granularity, startTime, endTime);
+    const points = [];
+
+    for (let index = 0; index < bucketCount; index += 1) {
+      const bucketStart = startTime + (index * step);
+      const bucketEnd = Math.min(endTime, bucketStart + step);
+      const label = formatTrendLabel(bucketStart, granularity);
+      let value = 0;
+
+      if (metric === 'activeUsers') {
+        const row = db.prepare(
+          `SELECT COUNT(DISTINCT user_id) AS count
+           FROM command_logs
+           WHERE created_at >= ? AND created_at < ?`
+        ).get(bucketStart, bucketEnd);
+        value = row.count || 0;
+      } else if (metric === 'errorRate') {
+        const total = db.prepare(
+          `SELECT COUNT(*) AS count
+           FROM command_logs
+           WHERE created_at >= ? AND created_at < ?`
+        ).get(bucketStart, bucketEnd);
+        const failed = db.prepare(
+          `SELECT COUNT(*) AS count
+           FROM command_logs
+           WHERE created_at >= ? AND created_at < ? AND status = ?`
+        ).get(bucketStart, bucketEnd, 'failed');
+        value = total.count > 0 ? Number(((failed.count / total.count) * 100).toFixed(2)) : 0;
+      } else if (metric === 'successRate') {
+        const total = db.prepare(
+          `SELECT COUNT(*) AS count
+           FROM command_logs
+           WHERE created_at >= ? AND created_at < ?`
+        ).get(bucketStart, bucketEnd);
+        const success = db.prepare(
+          `SELECT COUNT(*) AS count
+           FROM command_logs
+           WHERE created_at >= ? AND created_at < ? AND status = ?`
+        ).get(bucketStart, bucketEnd, 'success');
+        value = total.count > 0 ? Number(((success.count / total.count) * 100).toFixed(2)) : 0;
+      } else if (metric === 'avgResponseTime') {
+        const row = db.prepare(
+          `SELECT AVG(response_time) AS avg_time
+           FROM command_logs
+           WHERE created_at >= ? AND created_at < ? AND status = ? AND response_time IS NOT NULL`
+        ).get(bucketStart, bucketEnd, 'success');
+        value = row.avg_time ? Number(row.avg_time.toFixed(2)) : 0;
+      } else {
+        const row = db.prepare(
+          `SELECT COUNT(*) AS count
+           FROM command_logs
+           WHERE created_at >= ? AND created_at < ?`
+        ).get(bucketStart, bucketEnd);
+        value = row.count || 0;
+      }
+
+      points.push({
+        time: label,
+        value,
+        extra: {
+          timestamp: bucketStart
+        }
+      });
+    }
+
+    return points;
+  } catch (error) {
+    console.error('[数据库] 获取报表趋势失败:', error);
+    return [];
   }
 }
 

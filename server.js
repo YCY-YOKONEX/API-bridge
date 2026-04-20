@@ -22,6 +22,16 @@ import {
   getSystemMetrics,
   closeDatabase
 } from './database.js';
+import {
+  getDetailReport,
+  getDistributionReport,
+  getOverviewReport,
+  getRankingReport,
+  getTrendReport
+} from './reporting/service.js';
+import { getSummaryReport } from './reporting/summary.js';
+import { normalizeReportQuery } from './reporting/query.js';
+import { buildCsvExport } from './reporting/export.js';
 
 // 为腾讯云 SDK 提供 WebSocket polyfill (Node.js 环境需要)
 if (typeof global.WebSocket === 'undefined') {
@@ -880,6 +890,132 @@ app.get('/api/admin/stats/system-metrics', authenticateToken, async (req, res) =
     res.status(500).json({
       success: false,
       message: '获取系统指标失败'
+    });
+  }
+});
+
+app.get('/api/admin/reports/overview', authenticateToken, (req, res) => {
+  try {
+    const report = getOverviewReport(req.query);
+    res.json({
+      success: true,
+      data: report
+    });
+  } catch (error) {
+    log('ERROR', '获取报表总览失败:', error.message);
+    res.status(500).json({
+      success: false,
+      message: '获取报表总览失败'
+    });
+  }
+});
+
+app.get('/api/admin/reports/trends', authenticateToken, (req, res) => {
+  try {
+    const metric = req.query.metric || 'messageCount';
+    const series = getTrendReport(req.query, metric);
+    res.json({
+      success: true,
+      data: series
+    });
+  } catch (error) {
+    log('ERROR', '获取报表趋势失败:', error.message);
+    res.status(500).json({
+      success: false,
+      message: '获取报表趋势失败'
+    });
+  }
+});
+
+app.get('/api/admin/reports/distributions', authenticateToken, (req, res) => {
+  try {
+    const metric = req.query.metric || 'commandStatus';
+    const report = getDistributionReport(req.query, metric);
+    res.json({
+      success: true,
+      data: report
+    });
+  } catch (error) {
+    log('ERROR', '获取报表分布失败:', error.message);
+    res.status(500).json({
+      success: false,
+      message: '获取报表分布失败'
+    });
+  }
+});
+
+app.get('/api/admin/reports/rankings', authenticateToken, (req, res) => {
+  try {
+    const metric = req.query.metric || 'topCommands';
+    const report = getRankingReport(req.query, metric);
+    res.json({
+      success: true,
+      data: report
+    });
+  } catch (error) {
+    log('ERROR', '获取报表排行失败:', error.message);
+    res.status(500).json({
+      success: false,
+      message: '获取报表排行失败'
+    });
+  }
+});
+
+app.get('/api/admin/reports/details', authenticateToken, (req, res) => {
+  try {
+    const type = req.query.type || 'commands';
+    const report = getDetailReport(req.query, type);
+    res.json({
+      success: true,
+      data: report
+    });
+  } catch (error) {
+    log('ERROR', '获取报表明细失败:', error.message);
+    res.status(500).json({
+      success: false,
+      message: '获取报表明细失败'
+    });
+  }
+});
+
+app.get('/api/admin/reports/summary', authenticateToken, (req, res) => {
+  try {
+    const summary = getSummaryReport(req.query);
+    res.json({
+      success: true,
+      data: summary
+    });
+  } catch (error) {
+    log('ERROR', '获取报表摘要失败:', error.message);
+    res.status(500).json({
+      success: false,
+      message: '获取报表摘要失败'
+    });
+  }
+});
+
+app.post('/api/admin/reports/export', authenticateToken, (req, res) => {
+  try {
+    const query = normalizeReportQuery(req.body || {});
+    const type = req.body?.type || 'commands';
+    const format = req.body?.format || 'csv';
+
+    if (format !== 'csv') {
+      return res.status(400).json({
+        success: false,
+        message: '当前仅支持 CSV 导出'
+      });
+    }
+
+    const exported = buildCsvExport(query, type);
+    res.setHeader('Content-Type', exported.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${exported.filename}"`);
+    res.send(exported.body);
+  } catch (error) {
+    log('ERROR', '导出报表失败:', error.message);
+    res.status(500).json({
+      success: false,
+      message: '导出报表失败'
     });
   }
 });

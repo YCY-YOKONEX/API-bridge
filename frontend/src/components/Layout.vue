@@ -17,6 +17,10 @@
             <template #icon><LineChartOutlined /></template>
             运营监控
           </a-menu-item>
+          <a-menu-item key="reports" @click="$router.push('/reports')">
+            <template #icon><BarChartOutlined /></template>
+            报表中心
+          </a-menu-item>
           <a-menu-item key="logs" @click="$router.push('/logs')">
             <template #icon><FileTextOutlined /></template>
             日志管理
@@ -54,6 +58,7 @@ import { message } from 'ant-design-vue'
 import {
   DashboardOutlined,
   LineChartOutlined,
+  BarChartOutlined,
   FileTextOutlined,
   SettingOutlined
 } from '@ant-design/icons-vue'
@@ -68,6 +73,7 @@ const selectedKeys = computed(() => {
   const path = route.path
   if (path === '/') return ['dashboard']
   if (path === '/monitor') return ['monitor']
+  if (path === '/reports') return ['reports']
   if (path === '/logs') return ['logs']
   if (path === '/settings') return ['settings']
   return ['dashboard']

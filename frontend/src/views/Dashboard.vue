@@ -57,6 +57,16 @@
         </a-col>
       </a-row>
 
+      <a-card style="margin-top: 16px">
+        <a-space style="width: 100%; justify-content: space-between">
+          <div>
+            <div style="font-size: 16px; font-weight: 600; margin-bottom: 4px">综合报表中心</div>
+            <div style="color: #666">统一查看趋势、排行、明细和结构化摘要</div>
+          </div>
+          <a-button type="primary" @click="router.push('/reports')">进入报表中心</a-button>
+        </a-space>
+      </a-card>
+
       <!-- 第二行：运营统计 -->
       <a-row :gutter="16" style="margin-top: 16px">
         <a-col :span="6">

@@ -176,10 +176,11 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import Layout from '../components/Layout.vue'
 import { message } from 'ant-design-vue'
 import * as echarts from 'echarts'
+import { syncTrafficChart } from './monitorChart.js'
 import {
   UserOutlined,
   MessageOutlined,
@@ -226,108 +227,22 @@ const recentActivities = ref([])
 // ECharts图表
 const chartContainer = ref(null)
 let chart = null
+let trafficRefreshInterval = null
 
-// 初始化ECharts图表
-const initChart = () => {
-  if (!chartContainer.value) return
-
-  chart = echarts.init(chartContainer.value)
-
-  const option = {
-    tooltip: {
-      trigger: 'axis',
-      axisPointer: {
-        type: 'shadow'
-      },
-      formatter: function(params) {
-        return `${params[0].name}<br/>消息数: ${params[0].value} 条`
-      }
-    },
-    grid: {
-      left: '3%',
-      right: '4%',
-      bottom: '15%',
-      top: '5%',
-      containLabel: true
-    },
-    xAxis: {
-      type: 'category',
-      data: [],
-      axisLabel: {
-        rotate: timeRange.value === 'day' ? 45 : 0,
-        fontSize: 10
-      }
-    },
-    yAxis: {
-      type: 'value',
-      name: '消息数'
-    },
-    series: [{
-      name: '消息数',
-      type: 'bar',
-      data: [],
-      itemStyle: {
-        color: function(params) {
-          return params.value > maxMessageCount.value * 0.7 ? '#ff4d4f' : '#1890ff'
-        }
-      },
-      emphasis: {
-        itemStyle: {
-          shadowBlur: 10,
-          shadowOffsetX: 0,
-          shadowColor: 'rgba(0, 0, 0, 0.5)'
-        }
-      }
-    }]
+const handleChartResize = () => {
+  if (chart) {
+    chart.resize()
   }
-
-  chart.setOption(option)
-
-  // 响应式
-  window.addEventListener('resize', () => {
-    if (chart) {
-      chart.resize()
-    }
-  })
 }
 
-// 更新ECharts图表
 const updateChart = () => {
-  if (!chart || trafficTrend.value.length === 0) return
-
-  const times = trafficTrend.value.map(item => item.time)
-  const counts = trafficTrend.value.map(item => item.count)
-
-  // 根据数据点数量动态调整X轴标签显示
-  const dataLength = times.length
-  let interval = 0
-  
-  if (timeRange.value === 'day') {
-    interval = 2 // 每3个小时显示一个标签（24个点）
-  } else if (timeRange.value === 'week') {
-    interval = 5 // 每6个点显示一个标签
-  } else if (timeRange.value === 'month') {
-    interval = 4 // 每5个点显示一个标签
-  } else {
-    interval = 3 // 每4个点显示一个标签
-  }
-
-  chart.setOption({
-    xAxis: {
-      data: times,
-      axisLabel: {
-        interval: interval,
-        rotate: timeRange.value === 'day' ? 0 : 0 // 日视图也改为不旋转，因为标签短了
-      }
-    },
-    series: [{
-      data: counts,
-      itemStyle: {
-        color: function(params) {
-          return params.value > maxMessageCount.value * 0.7 ? '#ff4d4f' : '#1890ff'
-        }
-      }
-    }]
+  chart = syncTrafficChart({
+    chart,
+    container: chartContainer.value,
+    echartsLib: echarts,
+    trafficTrend: trafficTrend.value,
+    range: timeRange.value,
+    maxMessageCount: maxMessageCount.value
   })
 }
 
@@ -368,9 +283,9 @@ const fetchTrafficTrend = async (range = 'day') => {
   try {
     const response = await api.getTrafficTrend(range)
     if (response.success) {
-      trafficTrend.value = response.data.trend
+      trafficTrend.value = Array.isArray(response.data?.trend) ? response.data.trend : []
       // 计算最大值
-      maxMessageCount.value = Math.max(...response.data.trend.map(item => item.count), 100)
+      maxMessageCount.value = Math.max(...trafficTrend.value.map(item => item.count), 100)
       // 更新图表
       nextTick(() => {
         updateChart()
@@ -378,11 +293,19 @@ const fetchTrafficTrend = async (range = 'day') => {
     } else {
       trafficError.value = response.message || '获取流量趋势失败'
       trafficTrend.value = []
+      if (chart) {
+        chart.dispose()
+        chart = null
+      }
     }
   } catch (error) {
     console.error('获取流量趋势失败:', error)
     trafficError.value = '获取流量趋势失败，请稍后重试'
     trafficTrend.value = []
+    if (chart) {
+      chart.dispose()
+      chart = null
+    }
   } finally {
     loadingTraffic.value = false
   }
@@ -450,11 +373,6 @@ const getProgressColor = (percent) => {
 let refreshInterval
 
 onMounted(() => {
-  // 初始化ECharts
-  nextTick(() => {
-    initChart()
-  })
-
   fetchMonitorData()
   fetchTrafficTrend(timeRange.value)
   fetchSystemResources()
@@ -467,20 +385,36 @@ onMounted(() => {
   }, 30000)
 
   // 每分钟刷新流量趋势
-  setInterval(() => {
+  trafficRefreshInterval = setInterval(() => {
     fetchTrafficTrend(timeRange.value)
   }, 60000)
+
+  window.addEventListener('resize', handleChartResize)
 })
 
 onUnmounted(() => {
   if (refreshInterval) {
     clearInterval(refreshInterval)
   }
+  if (trafficRefreshInterval) {
+    clearInterval(trafficRefreshInterval)
+  }
+  window.removeEventListener('resize', handleChartResize)
   if (chart) {
     chart.dispose()
     chart = null
   }
 })
+
+watch(
+  [chartContainer, trafficTrend, timeRange],
+  () => {
+    nextTick(() => {
+      updateChart()
+    })
+  },
+  { flush: 'post' }
+)
 </script>
 
 <style scoped>

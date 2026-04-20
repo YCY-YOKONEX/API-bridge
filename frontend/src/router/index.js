@@ -4,6 +4,7 @@ import Dashboard from '../views/Dashboard.vue'
 import Logs from '../views/Logs.vue'
 import Settings from '../views/Settings.vue'
 import Monitor from '../views/Monitor.vue'
+import ReportsWorkbench from '../views/ReportsWorkbench.vue'
 
 const routes = [
   {
@@ -34,6 +35,12 @@ const routes = [
     path: '/monitor',
     name: 'Monitor',
     component: Monitor,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/reports',
+    name: 'ReportsWorkbench',
+    component: ReportsWorkbench,
     meta: { requiresAuth: true }
   }
 ]
