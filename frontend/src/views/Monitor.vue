@@ -281,9 +281,21 @@ const fetchTrafficTrend = async (range = 'day') => {
   loadingTraffic.value = true
   trafficError.value = null
   try {
-    const response = await api.getTrafficTrend(range)
+    const rangeMapping = {
+      day: { presetRange: 'today', granularity: 'hour', metric: 'messageCount' },
+      week: { presetRange: 'last7days', granularity: 'day', metric: 'messageCount' },
+      month: { presetRange: 'last30days', granularity: 'day', metric: 'messageCount' },
+      year: { presetRange: 'thisMonth', granularity: 'week', metric: 'messageCount' }
+    }
+    const reportParams = rangeMapping[range] || rangeMapping.day
+    const response = await api.getReportTrends(reportParams)
     if (response.success) {
-      trafficTrend.value = Array.isArray(response.data?.trend) ? response.data.trend : []
+      const points = Array.isArray(response.data?.points) ? response.data.points : []
+      trafficTrend.value = points.map(item => ({
+        time: item.time,
+        count: item.value,
+        timestamp: item.extra?.timestamp || Date.now()
+      }))
       // 计算最大值
       maxMessageCount.value = Math.max(...trafficTrend.value.map(item => item.count), 100)
       // 更新图表

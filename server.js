@@ -29,7 +29,7 @@ import {
   getRankingReport,
   getTrendReport
 } from './reporting/service.js';
-import { getSummaryReport } from './reporting/summary.js';
+import { getSummaryReport } from './reporting/summaryService.js';
 import { normalizeReportQuery } from './reporting/query.js';
 import { buildCsvExport } from './reporting/export.js';
 

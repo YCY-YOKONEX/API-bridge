@@ -18,6 +18,7 @@ Node.js IM 服务，负责连接腾讯云 IM 并发送游戏指令。
 - 📈 **真实响应时间**: 基于实际指令发送统计
 - 🗄️ **SQLite 数据库**: 持久化存储管理员信息和日志
 - 📋 **日志管理**: 连接日志和指令日志完整记录
+- 📊 **综合报表中心**: 统一查看总览、趋势、排行、明细与结构化摘要
 - 🔑 **密码重置**: 在线修改管理员密码
 - 🎨 **Vue3 管理后台**: 现代化的 Web 管理界面
 - 💻 **真实系统指标**: CPU、内存、磁盘使用率监控
@@ -73,6 +74,7 @@ npm run dev
 **管理后台功能:**
 - 📊 **运营监控**: 实时查看系统运行状态、流量趋势、系统资源
 - 👥 **控制台**: 管理用户会话和连接状态
+- 📈 **报表中心**: 统一筛选报表时间范围、查看趋势/排行/明细并导出 CSV
 - 📋 **日志管理**: 查询和分析连接日志、指令日志
 - 🔑 **账号设置**: 修改管理员密码和系统配置
 
@@ -96,6 +98,25 @@ curl http://localhost:3001/health
 **注意**:
 - 本地开发: `http://localhost:3001`
 - 生产环境: `http://your-server-ip:8080` (通过 Nginx)
+
+---
+
+## 报表中心
+
+当前管理后台已经新增 `/reports` 报表中心入口，支持以下能力：
+
+- 统一筛选时间范围、粒度、用户和状态
+- 查看总览指标卡片
+- 查看趋势图与结构分布图
+- 查看 TOP 排行和明细表
+- 生成结构化摘要
+- 导出当前筛选结果为 CSV
+
+说明：
+
+- 前端页面入口位于顶部导航“报表中心”
+- 后端接口前缀为 `/api/admin/reports/*`
+- 当前 CSV 导出已可用，Excel 导出仍建议在后续迭代中补充
 
 ---
 
@@ -243,6 +264,7 @@ A: 需要使用 session sticky（根据 userId 路由到同一实例）或 Redis
 - **[README.md](README.md)** - 项目说明（当前文档）
 - **[server.js](server.js)** - 服务器源代码
 - **[frontend](frontend)** - Web 管理后台(基于Vue开发)
+- **[docs/superpowers/plans/2026-04-21-reporting-center-implementation.md](docs/superpowers/plans/2026-04-21-reporting-center-implementation.md)** - 报表中心实施计划
 
 ### 配置示例
 - **[nginx.conf.example](nginx.conf.example)** - Nginx 完整配置示例

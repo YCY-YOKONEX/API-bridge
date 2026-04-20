@@ -959,6 +959,247 @@ Authorization: Bearer <token>
 
 ---
 
+### 16. 获取报表总览 (需要认证)
+
+返回统一的报表查询条件、总览统计和 KPI 卡片。
+
+**请求**
+
+```
+GET /api/admin/reports/overview?presetRange=today&granularity=hour
+Authorization: Bearer <token>
+```
+
+**查询参数**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| presetRange | string | 否 | today / last7days / last30days / thisMonth |
+| granularity | string | 否 | hour / day / week / month |
+| userId | string | 否 | 按用户筛选 |
+| commandStatus | string | 否 | all / success / failed |
+| startTime | string | 否 | 自定义开始时间（ISO 字符串） |
+| endTime | string | 否 | 自定义结束时间（ISO 字符串） |
+
+**响应**
+
+```json
+{
+  "success": true,
+  "data": {
+    "query": {
+      "presetRange": "today",
+      "granularity": "hour",
+      "page": 1,
+      "pageSize": 20
+    },
+    "cards": [
+      { "metric": "onlineUsers", "label": "在线用户", "value": 12, "unit": "人" },
+      { "metric": "activeUsers", "label": "活跃用户", "value": 24, "unit": "人" }
+    ],
+    "stats": {
+      "onlineUsers": 12,
+      "activeUsers": 24,
+      "todayMessages": 320,
+      "totalCommands": 320,
+      "successRate": 98.13,
+      "avgResponseTime": 45.7,
+      "p95ResponseTime": 110,
+      "errorRate": 1.87
+    }
+  }
+}
+```
+
+---
+
+### 17. 获取报表趋势 (需要认证)
+
+返回指定指标的趋势点位，供图表渲染使用。
+
+**请求**
+
+```
+GET /api/admin/reports/trends?presetRange=last7days&granularity=day&metric=messageCount
+Authorization: Bearer <token>
+```
+
+**响应**
+
+```json
+{
+  "success": true,
+  "data": {
+    "metric": "messageCount",
+    "granularity": "day",
+    "points": [
+      {
+        "time": "04-20",
+        "value": 52,
+        "extra": { "timestamp": 1745078400000 }
+      }
+    ]
+  }
+}
+```
+
+---
+
+### 18. 获取报表分布 (需要认证)
+
+返回状态分布或指令分布，供饼图等结构分析组件使用。
+
+**请求**
+
+```
+GET /api/admin/reports/distributions?metric=commandStatus
+Authorization: Bearer <token>
+```
+
+**响应**
+
+```json
+{
+  "success": true,
+  "data": {
+    "metric": "commandStatus",
+    "dimension": "commandStatus",
+    "items": [
+      { "key": "success", "label": "success", "value": 80, "ratio": 88.89 },
+      { "key": "failed", "label": "failed", "value": 10, "ratio": 11.11 }
+    ]
+  }
+}
+```
+
+---
+
+### 19. 获取报表排行 (需要认证)
+
+返回 TOP 用户或 TOP 指令排行。
+
+**请求**
+
+```
+GET /api/admin/reports/rankings?metric=topCommands
+Authorization: Bearer <token>
+```
+
+**响应**
+
+```json
+{
+  "success": true,
+  "data": {
+    "metric": "topCommands",
+    "items": [
+      { "key": "sendCommand", "label": "sendCommand", "value": 45 }
+    ]
+  }
+}
+```
+
+---
+
+### 20. 获取报表明细 (需要认证)
+
+返回报表明细表数据，支持连接明细或指令明细。
+
+**请求**
+
+```
+GET /api/admin/reports/details?type=commands&page=1&pageSize=20
+Authorization: Bearer <token>
+```
+
+**响应**
+
+```json
+{
+  "success": true,
+  "data": {
+    "type": "commands",
+    "columns": ["user_id", "command_id", "status", "message", "response_time", "created_at"],
+    "rows": [
+      {
+        "id": 1,
+        "user_id": "123456",
+        "command_id": "player_hurt",
+        "status": "success",
+        "message": "指令发送成功",
+        "response_time": 48,
+        "created_at": 1702741234567
+      }
+    ],
+    "pagination": {
+      "total": 100,
+      "page": 1,
+      "pageSize": 20
+    }
+  }
+}
+```
+
+---
+
+### 21. 获取报表摘要 (需要认证)
+
+返回结构化摘要，用于报表中心的洞察区块。
+
+**请求**
+
+```
+GET /api/admin/reports/summary?presetRange=last7days
+Authorization: Bearer <token>
+```
+
+**响应**
+
+```json
+{
+  "success": true,
+  "data": {
+    "headline": "当前周期指令总量 120 次，成功率 98.2%",
+    "highlights": ["sendCommand 为当前最高频指令"],
+    "anomalies": ["错误率峰值: 14:00 (8.2%)"],
+    "recommendations": ["建议优先排查异常时段相关日志与系统负载"]
+  }
+}
+```
+
+---
+
+### 22. 导出报表 (需要认证)
+
+按照当前筛选条件导出明细数据。
+
+**请求**
+
+```
+POST /api/admin/reports/export
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+**请求体**
+
+```json
+{
+  "format": "csv",
+  "type": "commands",
+  "presetRange": "today",
+  "granularity": "hour",
+  "userId": ""
+}
+```
+
+**响应**
+
+- 成功时返回 `text/csv`
+- 当前版本仅支持 `csv` 导出
+
+---
+
 ## 注意事项
 
 1. **会话管理**: 必须先调用 `/api/login` 创建会话，才能使用其他需要 userId 的接口
