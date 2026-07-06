@@ -520,7 +520,9 @@ class SessionManager {
   broadcastToClients(data) {
     const message = JSON.stringify(data);
     this.wsClients.forEach(client => {
-      if (client.readyState === 1) { // WebSocket.OPEN
+      // 管理后台接收全部事件；普通用户只接收自己会话相关事件，避免泄露后台统计。
+      const canReceive = client.isAdmin || (data.userId && data.userId === client.userId);
+      if (canReceive && client.readyState === 1) { // WebSocket.OPEN
         try {
           client.send(message);
         } catch (error) {
@@ -1258,6 +1260,14 @@ async function handleWebSocketMessage(ws, message) {
         break;
 
       case 'getStatus':
+        if (!ws.isAdmin) {
+          ws.send(JSON.stringify({
+            type: 'error',
+            message: '普通用户连接无权获取全局状态'
+          }));
+          return;
+        }
+
         const stats = sessionManager.getStats();
         ws.send(JSON.stringify({
           type: 'status',
@@ -1279,6 +1289,9 @@ async function handleWebSocketMessage(ws, message) {
           log('INFO', `WebSocket 收到登录请求: UID=${uid}, UserID=${userId}`);
 
           const session = await sessionManager.getOrCreateSession(userId, uid, data.token);
+          // 绑定用户身份，后续只推送该用户自己的 IM 事件。
+          ws.userId = session.userId;
+          ws.uid = session.uid;
           
           // 非管理后台连接才记录日志
           if (!ws.isAdmin) {
@@ -1469,7 +1482,14 @@ async function startServer() {
         
         // 非管理后台连接才记录日志
         if (!ws.isAdmin) {
-          logConnection(clientIp, 'N/A', 'ws_disconnect', 'success', 'WebSocket连接断开', clientIp);
+          logConnection(
+            ws.userId || clientIp,
+            ws.uid || 'N/A',
+            'ws_disconnect',
+            'success',
+            'WebSocket连接断开',
+            clientIp
+          );
         }
       });
     } catch (error) {

@@ -1,7 +1,10 @@
 <template>
   <Layout>
     <div class="reports-page">
-      <a-card title="综合报表中心" :bordered="false">
+      <div class="reports-shell">
+        <div class="reports-header">
+          <h2>综合报表中心</h2>
+        </div>
         <a-space direction="vertical" style="width: 100%" size="large">
           <a-form layout="inline">
             <a-form-item label="时间范围">
@@ -30,9 +33,36 @@
                 <a-select-option value="failed">失败</a-select-option>
               </a-select>
             </a-form-item>
+            <a-form-item label="趋势">
+              <a-select v-model:value="filters.metric" style="width: 150px">
+                <a-select-option v-for="item in trendMetricOptions" :key="item.value" :value="item.value">
+                  {{ item.label }}
+                </a-select-option>
+              </a-select>
+            </a-form-item>
+            <a-form-item label="分布">
+              <a-select v-model:value="filters.distributionMetric" style="width: 140px">
+                <a-select-option v-for="item in distributionMetricOptions" :key="item.value" :value="item.value">
+                  {{ item.label }}
+                </a-select-option>
+              </a-select>
+            </a-form-item>
+            <a-form-item label="排行">
+              <a-select v-model:value="filters.rankingMetric" style="width: 140px">
+                <a-select-option v-for="item in rankingMetricOptions" :key="item.value" :value="item.value">
+                  {{ item.label }}
+                </a-select-option>
+              </a-select>
+            </a-form-item>
+            <a-form-item label="明细">
+              <a-select v-model:value="filters.detailType" style="width: 120px">
+                <a-select-option value="commands">指令</a-select-option>
+                <a-select-option value="connections">连接</a-select-option>
+              </a-select>
+            </a-form-item>
             <a-form-item>
               <a-space>
-                <a-button type="primary" :loading="loading" @click="loadReports">查询</a-button>
+                <a-button type="primary" :loading="loading" @click="handleSearch">查询</a-button>
                 <a-button @click="resetFilters">重置</a-button>
                 <a-button :loading="exporting" @click="exportCsv">导出 CSV</a-button>
               </a-space>
@@ -108,20 +138,21 @@
               :columns="detailColumns"
               :data-source="detailRows"
               :loading="loading"
-              :pagination="false"
+              :pagination="detailTablePagination"
               size="small"
               row-key="id"
               :scroll="{ x: 900 }"
+              @change="handleDetailTableChange"
             />
           </a-card>
         </a-space>
-      </a-card>
+      </div>
     </div>
   </Layout>
 </template>
 
 <script setup>
-import { nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import { message } from 'ant-design-vue'
 import Layout from '../components/Layout.vue'
@@ -138,6 +169,9 @@ const overviewCards = ref([])
 const rankingRows = ref([])
 const detailRows = ref([])
 const detailColumns = ref([])
+const detailPagination = reactive({
+  total: 0
+})
 const summary = reactive({
   headline: '',
   highlights: [],
@@ -150,11 +184,44 @@ const distributionChartRef = ref(null)
 let trendChart = null
 let distributionChart = null
 
+const trendMetricOptions = [
+  { label: '指令量', value: 'messageCount' },
+  { label: '活跃用户', value: 'activeUsers' },
+  { label: '成功率', value: 'successRate' },
+  { label: '失败指令', value: 'failedCommands' },
+  { label: '错误率', value: 'errorRate' },
+  { label: '平均耗时', value: 'avgResponseTime' },
+  { label: 'P95耗时', value: 'p95ResponseTime' },
+  { label: '慢指令', value: 'slowCommands' },
+  { label: '登录失败', value: 'loginFailures' }
+]
+
+const distributionMetricOptions = [
+  { label: '状态分布', value: 'commandStatus' },
+  { label: '指令分布', value: 'commandId' },
+  { label: '耗时分布', value: 'responseTimeBucket' }
+]
+
+const rankingMetricOptions = [
+  { label: 'TOP 指令', value: 'topCommands' },
+  { label: 'TOP 用户', value: 'topUsers' },
+  { label: 'TOP 失败指令', value: 'topFailedCommands' }
+]
+
 const rankingColumns = [
   { title: '排名', dataIndex: 'rank', key: 'rank', width: 80 },
   { title: '名称', dataIndex: 'label', key: 'label' },
   { title: '数值', dataIndex: 'value', key: 'value', width: 120 }
 ]
+
+const detailTablePagination = computed(() => ({
+  current: filters.page,
+  pageSize: filters.pageSize,
+  total: detailPagination.total,
+  showSizeChanger: true,
+  pageSizeOptions: ['10', '20', '50', '100'],
+  showTotal: total => `共 ${total} 条`
+}))
 
 function ensureCharts() {
   if (trendChartRef.value && !trendChart) {
@@ -176,18 +243,27 @@ function resizeCharts() {
   }
 }
 
-async function loadReports() {
+async function loadReports(options = {}) {
+  if (options.resetPage) {
+    filters.page = 1
+  }
+
   loading.value = true
   pageError.value = ''
 
   try {
     const params = serializeReportFilters(filters)
+    const trendParams = { ...params, metric: filters.metric }
+    const distributionParams = { ...params, metric: filters.distributionMetric }
+    const rankingParams = { ...params, metric: filters.rankingMetric }
+    const detailParams = { ...params, type: filters.detailType }
+
     const [overviewRes, trendRes, distributionRes, rankingRes, detailRes, summaryRes] = await Promise.all([
       api.getReportOverview(params),
-      api.getReportTrends(params),
-      api.getReportDistributions(params),
-      api.getReportRankings(params),
-      api.getReportDetails(params),
+      api.getReportTrends(trendParams),
+      api.getReportDistributions(distributionParams),
+      api.getReportRankings(rankingParams),
+      api.getReportDetails(detailParams),
       api.getReportSummary(params)
     ])
 
@@ -200,6 +276,9 @@ async function loadReports() {
       key: column,
       ellipsis: true
     }))
+    detailPagination.total = detailRes.data?.pagination?.total || 0
+    filters.page = detailRes.data?.pagination?.page || filters.page
+    filters.pageSize = detailRes.data?.pagination?.pageSize || filters.pageSize
 
     summary.headline = summaryRes.data?.headline || ''
     summary.highlights = summaryRes.data?.highlights || []
@@ -224,8 +303,21 @@ async function loadReports() {
   }
 }
 
+function handleSearch() {
+  loadReports({ resetPage: true })
+}
+
 function resetFilters() {
-  Object.assign(filters, createReportFilters(), { page: defaultReportFilters.page, pageSize: defaultReportFilters.pageSize })
+  Object.assign(filters, createReportFilters(), {
+    page: defaultReportFilters.page,
+    pageSize: defaultReportFilters.pageSize
+  })
+  loadReports()
+}
+
+function handleDetailTableChange(pagination) {
+  filters.page = pagination.current || defaultReportFilters.page
+  filters.pageSize = pagination.pageSize || defaultReportFilters.pageSize
   loadReports()
 }
 
@@ -247,7 +339,7 @@ async function exportCsv() {
 }
 
 watch(
-  () => [filters.presetRange, filters.granularity],
+  () => [filters.presetRange, filters.granularity, filters.metric, filters.distributionMetric],
   () => {
     nextTick(() => {
       resizeCharts()
@@ -276,6 +368,24 @@ onUnmounted(() => {
 <style scoped>
 .reports-page {
   padding: 24px;
+}
+
+.reports-shell {
+  background: #fff;
+  border-radius: 8px;
+  padding: 24px;
+}
+
+.reports-header {
+  margin-bottom: 18px;
+}
+
+.reports-header h2 {
+  margin: 0;
+  color: rgba(0, 0, 0, 0.88);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 28px;
 }
 
 .report-chart {

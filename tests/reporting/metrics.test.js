@@ -7,13 +7,22 @@ test('buildOverviewCards会返回统一KPI结构', () => {
     onlineUsers: 5,
     activeUsers: 8,
     totalCommands: 30,
-    successRate: 96.6
+    successRate: 96.6,
+    failedCommands: 3,
+    errorRate: 10,
+    avgResponseTime: 52,
+    p95ResponseTime: 120,
+    slowCommands: 1,
+    loginFailures: 2
   })
 
   assert.equal(cards[0].metric, 'onlineUsers')
   assert.equal(cards[0].label, '在线用户')
   assert.equal(cards[2].value, 30)
   assert.equal(cards[3].unit, '%')
+  assert.equal(cards.find(card => card.metric === 'failedCommands').value, 3)
+  assert.equal(cards.find(card => card.metric === 'p95ResponseTime').unit, 'ms')
+  assert.equal(cards.find(card => card.metric === 'loginFailures').value, 2)
 })
 
 test('buildTrendSeries会输出ECharts友好的点位数组', () => {

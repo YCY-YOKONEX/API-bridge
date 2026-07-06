@@ -57,6 +57,39 @@
         </a-col>
       </a-row>
 
+      <a-card class="ws-info-card" title="当前 WebSocket 连接">
+        <a-row :gutter="[16, 16]">
+          <a-col :xs="24" :md="6">
+            <div class="ws-info-item">
+              <span class="ws-info-label">连接状态</span>
+              <a-tag :color="wsConnected ? 'success' : 'error'">
+                {{ wsConnected ? '已连接' : '未连接' }}
+              </a-tag>
+            </div>
+          </a-col>
+          <a-col :xs="24" :md="8">
+            <div class="ws-info-item">
+              <span class="ws-info-label">连接地址</span>
+              <a-typography-text code ellipsis class="ws-url">
+                {{ wsInfo.url || '-' }}
+              </a-typography-text>
+            </div>
+          </a-col>
+          <a-col :xs="24" :md="5">
+            <div class="ws-info-item">
+              <span class="ws-info-label">连接数量</span>
+              <span>{{ stats.wsConnections }} / {{ stats.maxWsConnections }}</span>
+            </div>
+          </a-col>
+          <a-col :xs="24" :md="5">
+            <div class="ws-info-item">
+              <span class="ws-info-label">最近心跳</span>
+              <span>{{ wsInfo.lastHeartbeatAt ? formatTime(wsInfo.lastHeartbeatAt) : '-' }}</span>
+            </div>
+          </a-col>
+        </a-row>
+      </a-card>
+
       <a-card style="margin-top: 16px">
         <a-space style="width: 100%; justify-content: space-between">
           <div>
@@ -252,6 +285,12 @@ import ws from '../utils/websocket'
 const router = useRouter()
 const loading = ref(false)
 const wsConnected = ref(false)
+let operationStatsTimer = null
+
+const wsInfo = reactive({
+  url: '',
+  lastHeartbeatAt: null
+})
 
 const stats = reactive({
   totalSessions: 0,
@@ -402,14 +441,16 @@ const showSessionDetail = (session) => {
 
 // WebSocket 连接
 const connectWebSocket = () => {
-  const wsUrl = import.meta.env.DEV
-    ? 'ws://localhost:3001?admin=true'
-    : `ws://${window.location.hostname}:3001?admin=true`
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  // 默认走同源 /ws 代理，后端端口只需要在 Nginx 或 Vite 里配置。
+  const wsUrl = import.meta.env.VITE_WS_BASE_URL || `${wsProtocol}//${window.location.host}/ws?admin=true`
 
   ws.connect(wsUrl)
+  wsInfo.url = ws.getUrl()
 
   ws.on('connected', () => {
     wsConnected.value = true
+    wsInfo.url = ws.getUrl()
   })
 
   ws.on('disconnected', () => {
@@ -417,6 +458,7 @@ const connectWebSocket = () => {
   })
 
   ws.on('heartbeat', (data) => {
+    wsInfo.lastHeartbeatAt = data.data?.timestamp || Date.now()
     if (data.data && data.data.stats) {
       stats.totalSessions = data.data.stats.totalSessions
       stats.maxSessions = data.data.stats.maxSessions
@@ -437,12 +479,16 @@ onMounted(() => {
   connectWebSocket()
 
   // 每30秒刷新一次运营统计
-  setInterval(() => {
+  operationStatsTimer = setInterval(() => {
     fetchOperationStats()
   }, 30000)
 })
 
 onUnmounted(() => {
+  if (operationStatsTimer) {
+    clearInterval(operationStatsTimer)
+    operationStatsTimer = null
+  }
   ws.disconnect()
 })
 </script>
@@ -476,6 +522,26 @@ onUnmounted(() => {
 
 .stats-container {
   padding: 24px;
+}
+
+.ws-info-card {
+  margin-top: 16px;
+}
+
+.ws-info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ws-info-label {
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 13px;
+}
+
+.ws-url {
+  max-width: 100%;
 }
 
 .sessions-container {

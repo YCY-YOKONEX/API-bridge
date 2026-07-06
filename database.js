@@ -20,6 +20,8 @@ const SM2_CIPHER_MODE = 1;
 
 // 创建数据库连接
 const db = new Database(join(__dirname, 'im-service.db'));
+const SLOW_RESPONSE_TIME_MS = 1000;
+let isDatabaseInitialized = false;
 
 // 启用 WAL 模式以提高并发性能
 db.pragma('journal_mode = WAL');
@@ -28,6 +30,10 @@ db.pragma('journal_mode = WAL');
  * 初始化数据库表
  */
 export function initDatabase() {
+  if (isDatabaseInitialized) {
+    return;
+  }
+
   // 创建管理员表
   db.exec(`
     CREATE TABLE IF NOT EXISTS admins (
@@ -72,6 +78,10 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_connection_logs_created_at ON connection_logs(created_at);
     CREATE INDEX IF NOT EXISTS idx_command_logs_user_id ON command_logs(user_id);
     CREATE INDEX IF NOT EXISTS idx_command_logs_created_at ON command_logs(created_at);
+    CREATE INDEX IF NOT EXISTS idx_command_logs_created_status ON command_logs(created_at, status);
+    CREATE INDEX IF NOT EXISTS idx_command_logs_user_created ON command_logs(user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_command_logs_command_created ON command_logs(command_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_connection_logs_created_action_status ON connection_logs(created_at, action, status);
   `);
 
   // 如果表已存在，添加response_time字段（兼容旧数据库）
@@ -100,6 +110,14 @@ export function initDatabase() {
   }
 
   console.log('[数据库] 数据库初始化完成');
+  isDatabaseInitialized = true;
+}
+
+function ensureDatabaseInitialized() {
+  if (!isDatabaseInitialized) {
+    // 防止单独导入报表模块时出现空库未建表的查询错误。
+    initDatabase();
+  }
 }
 
 /**
@@ -107,6 +125,7 @@ export function initDatabase() {
  */
 export function verifyAdmin(username, password) {
   try {
+    ensureDatabaseInitialized();
     const admin = db.prepare('SELECT * FROM admins WHERE username = ?').get(username);
 
     if (!admin) {
@@ -141,6 +160,7 @@ export function verifyAdmin(username, password) {
  */
 export function resetAdminPassword(username, oldPassword, newPassword) {
   try {
+    ensureDatabaseInitialized();
     // 先验证旧密码
     const verifyResult = verifyAdmin(username, oldPassword);
     if (!verifyResult.success) {
@@ -172,6 +192,7 @@ export function resetAdminPassword(username, oldPassword, newPassword) {
  */
 export function logConnection(userId, uid, action, status, message = null, ipAddress = null) {
   try {
+    ensureDatabaseInitialized();
     db.prepare(`
       INSERT INTO connection_logs (user_id, uid, action, status, message, ip_address, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -186,6 +207,7 @@ export function logConnection(userId, uid, action, status, message = null, ipAdd
  */
 export function logCommand(userId, commandId, status, message = null, responseTime = null) {
   try {
+    ensureDatabaseInitialized();
     db.prepare(`
       INSERT INTO command_logs (user_id, command_id, status, message, response_time, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
@@ -200,6 +222,7 @@ export function logCommand(userId, commandId, status, message = null, responseTi
  */
 export function getConnectionLogs(options = {}) {
   try {
+    ensureDatabaseInitialized();
     const {
       userId = null,
       action = null,
@@ -294,6 +317,7 @@ export function getConnectionLogs(options = {}) {
  */
 export function getCommandLogs(options = {}) {
   try {
+    ensureDatabaseInitialized();
     const {
       userId = null,
       status = null,
@@ -373,10 +397,112 @@ export function getCommandLogs(options = {}) {
 }
 
 /**
+ * 查询指令排行
+ */
+export function getCommandRanking(options = {}) {
+  try {
+    ensureDatabaseInitialized();
+    const {
+      userId = null,
+      status = null,
+      startTime = null,
+      endTime = null,
+      limit = 10
+    } = options;
+
+    const clauses = ['1=1'];
+    const params = [];
+
+    if (userId) {
+      clauses.push('user_id = ?');
+      params.push(userId);
+    }
+
+    if (status) {
+      clauses.push('status = ?');
+      params.push(status);
+    }
+
+    if (startTime) {
+      clauses.push('created_at >= ?');
+      params.push(startTime);
+    }
+
+    if (endTime) {
+      clauses.push('created_at <= ?');
+      params.push(endTime);
+    }
+
+    // 排行直接在数据库聚合，避免取固定条数后在内存里统计导致结果不准。
+    const rows = db.prepare(`
+      SELECT command_id AS key, command_id AS label, COUNT(*) AS value
+      FROM command_logs
+      WHERE ${clauses.join(' AND ')}
+      GROUP BY command_id
+      ORDER BY value DESC
+      LIMIT ?
+    `).all(...params, limit);
+
+    return { success: true, data: { items: rows } };
+  } catch (error) {
+    console.error('[数据库] 查询指令排行失败:', error);
+    return { success: false, message: '查询失败' };
+  }
+}
+
+/**
+ * 查询连接用户排行
+ */
+export function getConnectionUserRanking(options = {}) {
+  try {
+    ensureDatabaseInitialized();
+    const {
+      userId = null,
+      startTime = null,
+      endTime = null,
+      limit = 10
+    } = options;
+
+    const clauses = ['1=1'];
+    const params = [];
+
+    if (userId) {
+      clauses.push('user_id = ?');
+      params.push(userId);
+    }
+
+    if (startTime) {
+      clauses.push('created_at >= ?');
+      params.push(startTime);
+    }
+
+    if (endTime) {
+      clauses.push('created_at <= ?');
+      params.push(endTime);
+    }
+
+    const rows = db.prepare(`
+      SELECT user_id AS key, user_id AS label, COUNT(*) AS value
+      FROM connection_logs
+      WHERE ${clauses.join(' AND ')}
+      GROUP BY user_id
+      ORDER BY value DESC
+      LIMIT ?
+    `).all(...params, limit);
+
+    return { success: true, data: { items: rows } };
+  } catch (error) {
+    console.error('[数据库] 查询连接用户排行失败:', error);
+    return { success: false, message: '查询失败' };
+  }
+}
+
+/**
  * 获取日志统计
  */
 export function getLogStats() {
   try {
+    ensureDatabaseInitialized();
     const connectionTotal = db.prepare('SELECT COUNT(*) as total FROM connection_logs').get();
     const commandTotal = db.prepare('SELECT COUNT(*) as total FROM command_logs').get();
 
@@ -596,6 +722,58 @@ function buildConnectionWhereClause(query = {}) {
   };
 }
 
+function buildCommandBucketWhereClause(query = {}, bucketStart, bucketEnd) {
+  const clauses = ['created_at >= ?', 'created_at < ?'];
+  const params = [bucketStart, bucketEnd];
+
+  if (query.userId) {
+    clauses.push('user_id = ?');
+    params.push(query.userId);
+  }
+
+  const commandType = query.commandType && query.commandType !== 'all' ? query.commandType : null;
+  if (commandType) {
+    clauses.push('command_id = ?');
+    params.push(commandType);
+  }
+
+  const commandStatus = query.commandStatus && query.commandStatus !== 'all' ? query.commandStatus : null;
+  if (commandStatus) {
+    clauses.push('status = ?');
+    params.push(commandStatus);
+  }
+
+  if (query.latencyMin > 0) {
+    clauses.push('response_time >= ?');
+    params.push(query.latencyMin);
+  }
+
+  if (query.latencyMax > 0) {
+    clauses.push('response_time <= ?');
+    params.push(query.latencyMax);
+  }
+
+  return {
+    whereClause: clauses.join(' AND '),
+    params
+  };
+}
+
+function buildConnectionBucketWhereClause(query = {}, bucketStart, bucketEnd) {
+  const clauses = ['created_at >= ?', 'created_at < ?'];
+  const params = [bucketStart, bucketEnd];
+
+  if (query.userId) {
+    clauses.push('user_id = ?');
+    params.push(query.userId);
+  }
+
+  return {
+    whereClause: clauses.join(' AND '),
+    params
+  };
+}
+
 function getPercentile(values, percentile) {
   if (!values.length) {
     return 0;
@@ -656,6 +834,7 @@ function resolveTrendConfig(granularity = 'hour', windowStart, windowEnd) {
 
 export function getReportOverviewStats(query = {}) {
   try {
+    ensureDatabaseInitialized();
     const commandFilter = buildCommandWhereClause(query);
     const connectionFilter = buildConnectionWhereClause(query);
 
@@ -689,6 +868,18 @@ export function getReportOverviewStats(query = {}) {
        WHERE ${commandFilter.whereClause} AND status = ?`
     ).get(...commandFilter.params, 'failed');
 
+    const slowCommands = db.prepare(
+      `SELECT COUNT(*) AS count
+       FROM command_logs
+       WHERE ${commandFilter.whereClause} AND response_time > ?`
+    ).get(...commandFilter.params, SLOW_RESPONSE_TIME_MS);
+
+    const loginFailures = db.prepare(
+      `SELECT COUNT(*) AS count
+       FROM connection_logs
+       WHERE ${connectionFilter.whereClause} AND action = ? AND status = ?`
+    ).get(...connectionFilter.params, 'login', 'failed');
+
     const avgResponseResult = db.prepare(
       `SELECT AVG(response_time) AS avg_time
        FROM command_logs
@@ -715,6 +906,9 @@ export function getReportOverviewStats(query = {}) {
       activeUsers: activeUsers.count || 0,
       todayMessages: total,
       totalCommands: total,
+      failedCommands: failedCommands.count || 0,
+      slowCommands: slowCommands.count || 0,
+      loginFailures: loginFailures.count || 0,
       successRate,
       avgResponseTime: avgResponseResult.avg_time ? Number(avgResponseResult.avg_time.toFixed(2)) : 0,
       p50ResponseTime: getPercentile(responseTimes, 50),
@@ -731,6 +925,9 @@ export function getReportOverviewStats(query = {}) {
       activeUsers: 0,
       todayMessages: 0,
       totalCommands: 0,
+      failedCommands: 0,
+      slowCommands: 0,
+      loginFailures: 0,
       successRate: 0,
       avgResponseTime: 0,
       p50ResponseTime: 0,
@@ -745,6 +942,7 @@ export function getReportOverviewStats(query = {}) {
 
 export function getReportTrendPoints(query = {}, metric = 'messageCount') {
   try {
+    ensureDatabaseInitialized();
     const { startTime, endTime } = resolveReportWindow(query);
     const granularity = query.granularity || 'hour';
     const { step, bucketCount } = resolveTrendConfig(granularity, startTime, endTime);
@@ -754,52 +952,84 @@ export function getReportTrendPoints(query = {}, metric = 'messageCount') {
       const bucketStart = startTime + (index * step);
       const bucketEnd = Math.min(endTime, bucketStart + step);
       const label = formatTrendLabel(bucketStart, granularity);
+      // 趋势每个时间桶都复用报表筛选条件，保证图表和明细口径一致。
+      const bucketFilter = buildCommandBucketWhereClause(query, bucketStart, bucketEnd);
+      const connectionBucketFilter = buildConnectionBucketWhereClause(query, bucketStart, bucketEnd);
       let value = 0;
 
       if (metric === 'activeUsers') {
         const row = db.prepare(
           `SELECT COUNT(DISTINCT user_id) AS count
            FROM command_logs
-           WHERE created_at >= ? AND created_at < ?`
-        ).get(bucketStart, bucketEnd);
+           WHERE ${bucketFilter.whereClause}`
+        ).get(...bucketFilter.params);
+        value = row.count || 0;
+      } else if (metric === 'failedCommands') {
+        const row = db.prepare(
+          `SELECT COUNT(*) AS count
+           FROM command_logs
+           WHERE ${bucketFilter.whereClause} AND status = ?`
+        ).get(...bucketFilter.params, 'failed');
+        value = row.count || 0;
+      } else if (metric === 'slowCommands') {
+        const row = db.prepare(
+          `SELECT COUNT(*) AS count
+           FROM command_logs
+           WHERE ${bucketFilter.whereClause} AND response_time > ?`
+        ).get(...bucketFilter.params, SLOW_RESPONSE_TIME_MS);
+        value = row.count || 0;
+      } else if (metric === 'loginFailures') {
+        const row = db.prepare(
+          `SELECT COUNT(*) AS count
+           FROM connection_logs
+           WHERE ${connectionBucketFilter.whereClause} AND action = ? AND status = ?`
+        ).get(...connectionBucketFilter.params, 'login', 'failed');
         value = row.count || 0;
       } else if (metric === 'errorRate') {
         const total = db.prepare(
           `SELECT COUNT(*) AS count
            FROM command_logs
-           WHERE created_at >= ? AND created_at < ?`
-        ).get(bucketStart, bucketEnd);
+           WHERE ${bucketFilter.whereClause}`
+        ).get(...bucketFilter.params);
         const failed = db.prepare(
           `SELECT COUNT(*) AS count
            FROM command_logs
-           WHERE created_at >= ? AND created_at < ? AND status = ?`
-        ).get(bucketStart, bucketEnd, 'failed');
+           WHERE ${bucketFilter.whereClause} AND status = ?`
+        ).get(...bucketFilter.params, 'failed');
         value = total.count > 0 ? Number(((failed.count / total.count) * 100).toFixed(2)) : 0;
       } else if (metric === 'successRate') {
         const total = db.prepare(
           `SELECT COUNT(*) AS count
            FROM command_logs
-           WHERE created_at >= ? AND created_at < ?`
-        ).get(bucketStart, bucketEnd);
+           WHERE ${bucketFilter.whereClause}`
+        ).get(...bucketFilter.params);
         const success = db.prepare(
           `SELECT COUNT(*) AS count
            FROM command_logs
-           WHERE created_at >= ? AND created_at < ? AND status = ?`
-        ).get(bucketStart, bucketEnd, 'success');
+           WHERE ${bucketFilter.whereClause} AND status = ?`
+        ).get(...bucketFilter.params, 'success');
         value = total.count > 0 ? Number(((success.count / total.count) * 100).toFixed(2)) : 0;
       } else if (metric === 'avgResponseTime') {
         const row = db.prepare(
           `SELECT AVG(response_time) AS avg_time
            FROM command_logs
-           WHERE created_at >= ? AND created_at < ? AND status = ? AND response_time IS NOT NULL`
-        ).get(bucketStart, bucketEnd, 'success');
+           WHERE ${bucketFilter.whereClause} AND status = ? AND response_time IS NOT NULL`
+        ).get(...bucketFilter.params, 'success');
         value = row.avg_time ? Number(row.avg_time.toFixed(2)) : 0;
+      } else if (metric === 'p95ResponseTime') {
+        const samples = db.prepare(
+          `SELECT response_time
+           FROM command_logs
+           WHERE ${bucketFilter.whereClause} AND status = ? AND response_time IS NOT NULL
+           ORDER BY response_time ASC`
+        ).all(...bucketFilter.params, 'success');
+        value = getPercentile(samples.map(item => item.response_time), 95);
       } else {
         const row = db.prepare(
           `SELECT COUNT(*) AS count
            FROM command_logs
-           WHERE created_at >= ? AND created_at < ?`
-        ).get(bucketStart, bucketEnd);
+           WHERE ${bucketFilter.whereClause}`
+        ).get(...bucketFilter.params);
         value = row.count || 0;
       }
 

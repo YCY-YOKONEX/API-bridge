@@ -48,7 +48,8 @@ function delay(ms) {
 }
 
 const api = axios.create({
-  baseURL: import.meta.env.DEV ? '' : 'http://47.95.169.74:8080',
+  // 默认使用同源 /api，由 Nginx 或 Vite 代理到后端，避免后端端口变化后重新打包前端。
+  baseURL: import.meta.env.VITE_API_BASE_URL || '',
   timeout: 10000
 })
 

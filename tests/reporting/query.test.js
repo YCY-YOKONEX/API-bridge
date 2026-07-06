@@ -22,6 +22,8 @@ test('normalizeReportQuery会解析自定义时间并限制非法范围', () => 
 
   assert.equal(query.startTime, '2026-04-01T00:00:00.000Z')
   assert.equal(query.endTime, '2026-04-07T00:00:00.000Z')
+  assert.equal(query.windowStart, new Date('2026-04-01T00:00:00.000Z').getTime())
+  assert.equal(query.windowEnd, new Date('2026-04-07T00:00:00.000Z').getTime())
   assert.equal(query.page, 1)
   assert.equal(query.pageSize, 200)
   assert.equal(query.sortOrder, 'asc')

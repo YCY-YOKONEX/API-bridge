@@ -4,6 +4,8 @@ class WebSocketClient {
     this.reconnectTimer = null
     this.reconnectDelay = 3000
     this.listeners = new Map()
+    this.url = ''
+    this.manualClose = false
   }
 
   connect(url) {
@@ -11,6 +13,8 @@ class WebSocketClient {
       return
     }
 
+    this.url = url
+    this.manualClose = false
     this.ws = new WebSocket(url)
 
     this.ws.onopen = () => {
@@ -40,8 +44,14 @@ class WebSocketClient {
     this.ws.onclose = () => {
       console.log('WebSocket 已断开')
       this.emit('disconnected')
-      this.scheduleReconnect()
+      if (!this.manualClose) {
+        this.scheduleReconnect()
+      }
     }
+  }
+
+  getUrl() {
+    return this.url
   }
 
   scheduleReconnect() {
@@ -51,7 +61,9 @@ class WebSocketClient {
 
     this.reconnectTimer = setTimeout(() => {
       console.log('尝试重新连接 WebSocket...')
-      this.connect(this.ws.url)
+      if (this.url) {
+        this.connect(this.url)
+      }
     }, this.reconnectDelay)
   }
 
@@ -93,6 +105,7 @@ class WebSocketClient {
   }
 
   disconnect() {
+    this.manualClose = true
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
